@@ -77,7 +77,7 @@ def main():
     mime = "image/png" if fmt == "PNG" else "image/jpeg"
 
     # ✅ 독립 저장 버튼: 모바일/웹 모두 확실히 동작
-    if st.button("💾 저장 (Drive + Sheet)", key="save_btn", use_container_width=True):
+    if st.button("💾 저장 (Drive + Sheet)", key="save_btn", use_container_width=False, width="stretch"):
         if "__img_bytes__" not in st.session_state:
             st.error("이미지 데이터를 찾을 수 없습니다. 다시 업로드/촬영해 주세요.")
             return

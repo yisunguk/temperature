@@ -1,17 +1,23 @@
-streamlit>=1.37.0
-Pillow
-gspread
-gspread-dataframe
-google-auth
-google-auth-oauthlib
-google-api-python-client
-python-dateutil
+# ---- Core UI ----
+streamlit==1.49.1
+Pillow==11.3.0
+pandas==2.2.3
+python-dateutil==2.9.0.post0
 streamlit-cookies-manager==0.2.0
-google-generativeai
+
+# ---- Google APIs ----
+gspread==6.2.1
+gspread-dataframe==4.0.0
+google-auth==2.40.3
+google-auth-oauthlib==1.2.2
+google-api-python-client==2.181.0
+
+# ---- OCR / CV ----
 numpy==1.26.4
 easyocr==1.7.1
 opencv-python-headless==4.8.1.78
 torch==2.2.2
 torchvision==0.17.2
-google-generativeai
 
+# ---- LLM (Gemini) ----
+google-generativeai==0.8.5

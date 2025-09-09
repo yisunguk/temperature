@@ -101,7 +101,7 @@ EasyOCR이 추정한 후보값 및 ROI 토큰 힌트를 참고하되, 당신이 
     resp = model.generate_content([prompt, img_part])
     return (resp.text or "").strip()
 
-def run_ocr(pil_image: Image.Image) -> dict:
+def run_ocr(pil_image: Image.Image, img_bytes: bytes | None = None) -> dict:
     # 1) EasyOCR로 후보 추출
     t_ez, h_ez, top_tokens, bot_tokens = _easyocr_candidates(pil_image)
 
