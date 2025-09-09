@@ -55,6 +55,9 @@ def main():
 
     st.success("OCR 추출 완료!")
     with st.expander("추출 원문 보기", expanded=False):
+        if result.get("pretty"):
+            st.write(f"**온도/습도:** {result['pretty']}")
+            st.divider()
         st.text(result.get("raw_text", ""))
 
     # ✔ 폼은 값 편집만 담당 (저장 버튼은 폼 밖에서!)
