@@ -162,3 +162,37 @@ def diagnose_drive():
         info["error"] = str(e); info["can_create_in_folder"] = False
     return info
 
+# storage.py (파일 하단에 추가)
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
+
+def upload_image_to_drive_user(creds, image_bytes: bytes, filename_prefix="photo", mime_type: str = "image/jpeg") -> str:
+    """
+    사용자 OAuth Credentials로 My Drive에 업로드.
+    DRIVE_FOLDER_ID가 있으면 해당 폴더에 저장, 없으면 루트에 저장.
+    """
+    drive = build("drive", "v3", credentials=creds)
+    media = MediaIoBaseUpload(io.BytesIO(image_bytes), mimetype=mime_type, resumable=False)
+    filename = f"{filename_prefix}_{int(time.time())}{'.png' if mime_type=='image/png' else '.jpg'}"
+    body = {"name": filename}
+    if DRIVE_FOLDER_ID:
+        body["parents"] = [DRIVE_FOLDER_ID]
+
+    file = drive.files().create(
+        body=body,
+        media_body=media,
+        fields="id, webViewLink, webContentLink"
+    ).execute()
+
+    file_id = file["id"]
+
+    # 선택: 링크 공개
+    if SHARE_IMAGE_PUBLIC:
+        try:
+            drive.permissions().create(fileId=file_id, body={"role": "reader", "type": "anyone"}).execute()
+            file = drive.files().get(fileId=file_id, fields="webViewLink, webContentLink").execute()
+        except Exception:
+            pass
+
+    return file.get("webViewLink") or file.get("webContentLink") or f"https://drive.google.com/file/d/{file_id}/view"
+
