@@ -142,13 +142,8 @@ def diagnose_permissions():
 
 def diagnose_drive():
     """Drive 연결/권한 진단: 폴더 조회 및 임시 파일 생성/삭제 테스트"""
-    info = {
-        "drive_folder_id": DRIVE_FOLDER_ID,
-        "gdrive_sa": None,
-        "folder_ok": None,
-        "can_create_in_folder": None,
-        "error": None,
-    }
+    info = {"drive_folder_id": DRIVE_FOLDER_ID, "gdrive_sa": None,
+            "folder_ok": None, "can_create_in_folder": None, "error": None}
     try:
         info["gdrive_sa"] = st.secrets["gdrive_service_account"].get("client_email")
     except Exception:
@@ -156,18 +151,14 @@ def diagnose_drive():
 
     try:
         drive = init_gdrive_service()
-        # 폴더 정보 조회
-        folder = drive.files().get(fileId=DRIVE_FOLDER_ID, fields="id, name, mimeType").execute()
+        folder = drive.files().get(fileId=DRIVE_FOLDER_ID, fields="id,name,mimeType").execute()
         info["folder_ok"] = (folder.get("mimeType") == "application/vnd.google-apps.folder")
-        # 임시 파일 생성/삭제
         media = MediaIoBaseUpload(io.BytesIO(b"diag"), mimetype="text/plain", resumable=False)
-        tmp = drive.files().create(
-            body={"name": "_diag.txt", "parents": [DRIVE_FOLDER_ID]},
-            media_body=media, fields="id"
-        ).execute()
+        tmp = drive.files().create(body={"name":"_diag.txt","parents":[DRIVE_FOLDER_ID]},
+                                   media_body=media, fields="id").execute()
         drive.files().delete(fileId=tmp["id"]).execute()
         info["can_create_in_folder"] = True
     except Exception as e:
-        info["error"] = str(e)
-        info["can_create_in_folder"] = False
+        info["error"] = str(e); info["can_create_in_folder"] = False
     return info
+
