@@ -2,15 +2,28 @@
 import streamlit as st
 from ui import render_header, input_panel, extracted_edit_form, table_view
 from ocr import run_ocr
-from storage import read_dataframe, upload_image_to_drive, append_row
+from storage import read_dataframe, upload_image_to_drive, append_row, diagnose_permissions
 
 st.set_page_config(page_title="실외 온도/습도 기록기", layout="centered")
 
 def main():
     render_header()
 
-    df = read_dataframe()
-    table_view(df)
+    # [변경 후]
+    try:
+        df = read_dataframe()
+        table_view(df)
+    except Exception as e:
+        st.error("Google Sheets에 접근할 수 없습니다. 아래 점검 정보를 확인하고 권한/ID를 맞춰주세요.")
+        diag = diagnose_permissions()  # storage.py에 추가한 함수
+        st.code(diag, language="python")
+        st.info(
+            "✅ 스프레드시트 편집자 추가: google-sheet@temperature-471604.iam.gserviceaccount.com\n"
+            "✅ 드라이브 폴더 편집자 추가: temperature-app-photo@temperature-471604.iam.gserviceaccount.com\n"
+            "✅ secrets.toml의 SHEET_ID / DRIVE_FOLDER_ID 확인"
+        )
+        st.stop()
+
 
     st.divider()
     st.subheader("입력")

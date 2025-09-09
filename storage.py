@@ -114,3 +114,31 @@ def upload_image_to_drive(image_bytes: bytes, filename_prefix="photo") -> str:
 
     # webViewLink가 시트에서 클릭하기 편함
     return file.get("webViewLink") or file.get("webContentLink") or f"https://drive.google.com/file/d/{file_id}/view"
+
+# storage.py 맨 아래에 추가
+def diagnose_permissions():
+    info = {
+        "sheet_id": SHEET_ID,
+        "drive_folder_id": DRIVE_FOLDER_ID,
+        "gsheets_sa": None,
+        "gdrive_sa": None,
+        "open_by_key_ok": None,
+        "error": None,
+    }
+    try:
+        info["gsheets_sa"] = st.secrets["gsheet_service_account"].get("client_email")
+    except Exception:
+        info["gsheets_sa"] = "(missing [gsheet_service_account] in secrets)"
+    try:
+        info["gdrive_sa"] = st.secrets["gdrive_service_account"].get("client_email")
+    except Exception:
+        info["gdrive_sa"] = "(missing [gdrive_service_account] in secrets)"
+
+    try:
+        gc = init_gsheet_client()
+        gc.open_by_key(SHEET_ID)   # 권한/ID 검증
+        info["open_by_key_ok"] = True
+    except Exception as e:
+        info["open_by_key_ok"] = False
+        info["error"] = str(e)
+    return info
