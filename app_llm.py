@@ -179,7 +179,7 @@ if files:
 
 with col2:
     st.subheader("표 (5개 필드)")
-    edited = st.data_editor(st.session_state.records, use_container_width=True, num_rows="dynamic",
+    edited = st.data_editor(st.session_state.records, width="stretch", num_rows="dynamic",
                             column_config={
                                 "temperature_c": st.column_config.NumberColumn(format="%.1f"),
                                 "humidity_pct": st.column_config.NumberColumn(min_value=0,max_value=100),
@@ -189,7 +189,7 @@ with col2:
     st.session_state.records = edited
 
     n = st.number_input("최근 불러올 건수", 1, 1000, 100)
-    if st.button("Firestore에서 불러오기", use_container_width=True):
+    if st.button("Firestore에서 불러오기", width="stretch"):
         try:
             rows = fetch_recent_from_firestore(int(n))
             if rows:
@@ -205,5 +205,5 @@ with col2:
         data=st.session_state.records.to_csv(index=False).encode("utf-8-sig"),
         file_name=f"measurements_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
         mime="text/csv",
-        use_container_width=True,
+        width="stretch",
     )
