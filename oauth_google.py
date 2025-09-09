@@ -4,6 +4,18 @@ import streamlit as st
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+from streamlit_cookies_manager import EncryptedCookieManager
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 쿠키 관리 (브라우저 닫아도 유지)
+# ──────────────────────────────────────────────────────────────────────────────
+cookies = EncryptedCookieManager(
+    prefix="envrecorder",  # 쿠키 키 prefix
+    password=st.secrets.get("COOKIE_PASSWORD", "dev-only-cookie-secret"),
+)
+if not cookies.ready():
+    st.stop()  # Streamlit 컴포넌트 초기화 대기
 
 
 def _scopes():
@@ -30,9 +42,8 @@ def _client_config():
     }
 
 
-def _save(creds: Credentials):
-    """세션에 토큰 저장 (rerun에도 재사용)"""
-    token = {
+def _token_dict(creds: Credentials) -> dict:
+    return {
         "token": creds.token,
         "refresh_token": creds.refresh_token,
         "token_uri": "https://oauth2.googleapis.com/token",
@@ -40,15 +51,20 @@ def _save(creds: Credentials):
         "client_secret": st.secrets["google_oauth"]["client_secret"],
         "scopes": _scopes(),
     }
-    st.session_state["__google_token__"] = json.dumps(token)
 
 
-def _load() -> Credentials | None:
-    """세션에서 토큰 불러오고, 필요시 자동 refresh"""
-    raw = st.session_state.get("__google_token__")
+def _save(creds: Credentials):
+    """세션 + 암호화 쿠키에 저장"""
+    data = _token_dict(creds)
+    raw = json.dumps(data)
+    st.session_state["__google_token__"] = raw
+    cookies["gdrive_oauth"] = raw
+    cookies.save()  # 브라우저에 기록
+
+
+def _load_from_raw(raw: str | None) -> Credentials | None:
     if not raw:
         return None
-
     data = json.loads(raw)
     creds = Credentials(
         token=data.get("token"),
@@ -65,22 +81,36 @@ def _load() -> Credentials | None:
     return creds
 
 
+def _load() -> Credentials | None:
+    # 1) 세션 → 2) 쿠키 순으로 복원
+    raw = st.session_state.get("__google_token__")
+    creds = _load_from_raw(raw)
+    if creds and creds.valid:
+        return creds
+
+    raw = cookies.get("gdrive_oauth")
+    creds = _load_from_raw(raw)
+    if creds and creds.valid:
+        # 쿠키에서 복원했으면 세션에도 넣어두기
+        _save(creds)
+        return creds
+    return None
+
+
 def _clear_code_param():
     try:
-        # 최신 API
         st.query_params.clear()
     except Exception:
-        # 구버전 호환
         st.experimental_set_query_params()
 
 
 def ensure_user_drive_creds() -> Credentials:
     """
-    - 세션에 유효한 토큰이 있으면 그대로 사용
-    - 처음 진입 시 Google 로그인 링크를 보여줌(offline + prompt=consent)
-    - 리다이렉트 후 code를 받아오면 토큰 저장 → 세션에 보관 → code 파라미터 제거
+    - 세션/쿠키에 유효한 토큰이 있으면 그대로 사용
+    - 없으면 OAuth 로그인 유도(offline + prompt=consent로 refresh_token 확보)
+    - 로그인/리다이렉트 후에는 토큰을 세션+쿠키에 저장 → 이후 브라우저 닫아도 유지
     """
-    # 1) 세션에 저장된 자격 증명 재사용
+    # 1) 저장된 토큰 재사용
     creds = _load()
     if creds and creds.valid:
         return creds
@@ -98,16 +128,15 @@ def ensure_user_drive_creds() -> Credentials:
     )
 
     if code:
-        # code로 토큰 교환
         flow.fetch_token(code=code)
         creds = flow.credentials
 
-        # 일부 계정은 처음에 refresh_token이 오지 않을 수 있어 재동의 한 번 유도
+        # 어떤 계정은 refresh_token이 처음에 비어 올 수 있어 재동의 한번 유도
         if not creds.refresh_token:
             auth_url, _ = flow.authorization_url(
                 access_type="offline",
                 include_granted_scopes="true",
-                prompt="consent",  # ← 오프라인 토큰을 확실히 받기 위한 재동의
+                prompt="consent",
             )
             st.info("Google 권한을 한 번만 다시 확인해 주세요. 이후에는 자동으로 유지됩니다.")
             st.link_button("✅ 권한 부여(한 번만)", auth_url, use_container_width=True)
@@ -117,11 +146,11 @@ def ensure_user_drive_creds() -> Credentials:
         _clear_code_param()
         return creds
 
-    # 3) 아직 인증 전이면 로그인 버튼 표시 (offline+consent로 최초 1회 refresh_token 확보)
+    # 3) 아직 인증 전이면 로그인 버튼 표시
     auth_url, _ = flow.authorization_url(
-        access_type="offline",
+        access_type="offline",            # ← refresh_token 발급
         include_granted_scopes="true",
-        prompt="consent",
+        prompt="consent",                 # ← 같은 계정/클라이언트여도 확실히 받기
     )
     st.info("Google Drive 업로드를 위해 로그인해 주세요. (최초 1회)")
     st.link_button("🔐 Google로 로그인", auth_url, use_container_width=True)
@@ -129,7 +158,9 @@ def ensure_user_drive_creds() -> Credentials:
 
 
 def logout_button(label="🚪 로그아웃"):
-    """원할 때 수동 로그아웃"""
+    """원할 때 수동 로그아웃 (세션+쿠키 모두 삭제)"""
     if st.button(label, type="secondary"):
         st.session_state.pop("__google_token__", None)
+        cookies["gdrive_oauth"] = ""
+        cookies.save()
         st.experimental_rerun()
