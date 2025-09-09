@@ -56,10 +56,10 @@ def main():
     st.success("OCR 추출 완료!")
     if result.get("pretty"):
         col1, col2 = st.columns(2)
-    with col1:
-        st.metric("온도(℃)", f"{result['temperature']:.1f}" if result['temperature'] is not None else "-")
-    with col2:
-        st.metric("습도(%)", f"{result['humidity']:.1f}" if result['humidity'] is not None else "-")
+        with col1:
+            st.metric("온도(℃)", f"{result['temperature']:.1f}" if result['temperature'] is not None else "-")
+        with col2:
+            st.metric("습도(%)", f"{result['humidity']:.1f}" if result['humidity'] is not None else "-")
     
     # ✔ 폼은 값 편집만 담당 (저장 버튼은 폼 밖에서!)
     date_str, temp, hum = extracted_edit_fields(
