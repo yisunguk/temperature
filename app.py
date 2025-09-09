@@ -4,9 +4,16 @@ from datetime import datetime
 
 from ui import render_header, input_panel, extracted_edit_form, table_view
 from ocr import run_ocr
-from storage import read_dataframe, upload_image_to_drive, append_row, diagnose_permissions
+from storage import (
+    read_dataframe,
+    upload_image_to_drive,
+    append_row,
+    diagnose_permissions,
+    diagnose_drive,
+)
 
 st.set_page_config(page_title="실외 온도/습도 기록기", layout="centered")
+
 
 def main():
     render_header()
@@ -32,7 +39,8 @@ def main():
 
     if pil_img is not None and img_bytes is not None:
         with st.expander("이미지 미리보기", expanded=True):
-            st.image(pil_img, caption="입력 이미지", width="stretch")
+            # st.image 의 width='stretch'는 지원 안 하므로 기본 표시
+            st.image(pil_img, caption="입력 이미지")
 
         with st.spinner("OCR 추출 중..."):
             result = run_ocr(pil_img)
@@ -59,6 +67,10 @@ def main():
         if not date_str:
             date_str = datetime.now().strftime("%Y-%m-%d")
 
+        # 업로드 파일 MIME 추정 (카메라는 보통 JPEG)
+        fmt = (getattr(pil_img, "format", "") or "").upper()
+        mime = "image/png" if fmt == "PNG" else "image/jpeg"
+
         # (C) 저장 처리: Drive 업로드 → URL 생성 → 시트에 행 추가 → 표 새로고침
         if submitted:
             if "__img_bytes__" not in st.session_state:
@@ -66,8 +78,11 @@ def main():
             else:
                 try:
                     link = upload_image_to_drive(
-                        st.session_state["__img_bytes__"], filename_prefix="env_photo"
+                        st.session_state["__img_bytes__"],
+                        filename_prefix="env_photo",
+                        mime_type=mime,
                     )
+
                     # 숫자 변환(비어 있으면 None)
                     try:
                         temp_val = float(temp) if temp is not None else None
@@ -81,11 +96,23 @@ def main():
                     append_row(date_str, temp_val, hum_val, link)
                     st.toast("저장 완료! 테이블을 새로고침합니다.", icon="✅")
                     st.rerun()
+
                 except Exception as e:
                     st.error(f"저장 중 오류: {e}")
+                    # 드라이브 진단 정보 제공
+                    try:
+                        st.code(diagnose_drive(), language="python")
+                        st.info(
+                            "✅ 드라이브 폴더에 **temperature-app-photo@temperature-471604.iam.gserviceaccount.com** 편집자 추가\n"
+                            "✅ secrets.toml 의 DRIVE_FOLDER_ID 확인\n"
+                            "✅ 폴더가 '공유 드라이브'에 있다면 그 드라이브에도 서비스 계정 권한 부여"
+                        )
+                    except Exception:
+                        pass
 
     else:
         st.info("카메라로 촬영하거나 갤러리에서 이미지를 업로드하세요.")
+
 
 if __name__ == "__main__":
     main()
