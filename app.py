@@ -51,7 +51,7 @@ def main():
         st.image(pil_img, caption="입력 이미지")
 
     with st.spinner("OCR 추출 중..."):
-        result = run_ocr(pil_img)
+        result = run_ocr(pil_img, st.session_state.get("__img_bytes__"))
 
     st.success("OCR 추출 완료!")
     if result.get("pretty"):

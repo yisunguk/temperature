@@ -1,7 +1,5 @@
 streamlit>=1.37.0
 Pillow
-numpy
-easyocr
 gspread
 gspread-dataframe
 google-auth
@@ -9,6 +7,11 @@ google-auth-oauthlib
 google-api-python-client
 python-dateutil
 streamlit-cookies-manager==0.2.0
-opencv-python-headless>=4.8
-opencv-python
 google-generativeai
+numpy==1.26.4
+easyocr==1.7.1
+opencv-python-headless==4.8.1.78
+torch==2.2.2
+torchvision==0.17.2
+google-generativeai
+
