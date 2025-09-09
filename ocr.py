@@ -1,132 +1,128 @@
-# ocr.py ─ EasyOCR+전처리(+Gemini 폴백)
-import re, io, os, base64
-from datetime import datetime
+# ocr.py — EasyOCR 후보 → Gemini가 최종 결정(정답 JSON) 버전
+import io, json, re
 from typing import Optional, Tuple
 import numpy as np
 from PIL import Image
 import streamlit as st
 import easyocr
-import cv2
 
-# ---- EasyOCR 캐시
+# ── EasyOCR 준비 ───────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def _reader():
     return easyocr.Reader(["ko", "en"], gpu=False)
 
-def _norm_num(s: str) -> Optional[float]:
-    if s is None: return None
-    s = s.replace(",", ".").strip()
-    try: return float(s)
-    except: return None
-
-def _extract_date(text: str) -> Optional[str]:
-    text = text.replace(" ", "")
-    m = re.search(r"(20\d{2})[.\-\/년](\d{1,2})[.\-\/월](\d{1,2})", text) or \
-        re.search(r"\b(20\d{2})-(\d{2})-(\d{2})\b", text)
-    if not m: return None
-    y, mo, d = map(int, m.groups())
-    try: return datetime(y, mo, d).strftime("%Y-%m-%d")
-    except ValueError: return None
-
-def _preprocess(gray: np.ndarray) -> np.ndarray:
-    # 가벼운 노이즈 제거 → Otsu 이진화 → 살짝 팽창(세그먼트 끊김 방지)
-    blur = cv2.GaussianBlur(gray, (3,3), 0)
-    _, bw = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-    kernel = np.ones((2,2), np.uint8)
-    bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=1)
-    return bw
-
-def _best_number_from_texts(tokens, allow_percent=False):
-    nums = []
-    for t in (tokens or []):
-        s = str(t)
-        m = re.search(r"-?\d{1,3}(?:[.,]\d)?", s)  # 소수 1자리까지
-        if not m: continue
-        v = _norm_num(m.group(0))
-        if v is None: continue
-        if allow_percent:
-            if 0 <= v <= 100: nums.append(v)
-        else:
-            if -40 <= v <= 60: nums.append(v)   # 온도 합리 범위
-    if not nums: return None
-    # 소수점 있는 값을 우선
-    nums.sort(key=lambda x: (0 if (isinstance(x, float) and x != int(x)) else 1, -x))
-    return float(nums[0])
-
-def _validate(t: Optional[float], h: Optional[float]) -> bool:
-    return (t is not None and -40 <= t <= 60) and (h is not None and 0 <= h <= 100)
-
-# ---- Gemini 폴백 (선택적)
-def _gemini_fallback(img_bytes: Optional[bytes]) -> Tuple[Optional[float], Optional[float]]:
-    """GOOGLE_API_KEY가 있을 때만 폴백 시도. 실패하면 (None, None)"""
-    api_key = st.secrets.get("GOOGLE_API_KEY")
-    if not api_key or not img_bytes:
-        return None, None
+def _norm_num(x) -> Optional[float]:
+    if x is None: return None
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-
-        prompt = (
-            "You are reading only two numbers from a device display.\n"
-            "Return STRICT JSON only with keys: "
-            '{"temperature": float|null, "temp_unit":"C"|"F"|null, '
-            '"humidity": float|null, "hum_unit":"%"|null, "confidence": float}.\n'
-            "Rules: read digits only; no guesses; if unreadable use null. "
-        )
-        b64 = base64.b64encode(img_bytes).decode("utf-8")
-        img_part = {"mime_type": "image/jpeg", "data": base64.b64decode(b64)}
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        resp = model.generate_content([prompt, img_part])
-        text = resp.text.strip()
-        # JSON 추출
-        m = re.search(r"\{.*\}", text, re.S)
-        if not m: return None, None
-        import json
-        data = json.loads(m.group(0))
-        t = data.get("temperature"); h = data.get("humidity")
-        # 단위 보정 (화씨 → 섭씨)
-        if data.get("temp_unit") == "F" and isinstance(t,(int,float)):
-            t = (t - 32) * 5.0/9.0
-        return (float(t) if t is not None else None,
-                float(h) if h is not None else None)
+        return float(str(x).replace(",", ".").strip())
     except Exception:
-        return None, None
+        return None
 
-def run_ocr(pil_image: Image.Image, img_bytes: Optional[bytes]=None) -> dict:
+def _best_number(tokens, allow_percent=False):
+    nums = []
+    for t in tokens or []:
+        s = str(t)
+        m = re.search(r"-?\d{1,2}(?:[.,]\d+)?", s)
+        if not m: 
+            continue
+        v = _norm_num(m.group(0))
+        if v is None: 
+            continue
+        if allow_percent:
+            if 0 <= v <= 100:
+                nums.append(v)
+        else:
+            if -10 <= v <= 50:
+                nums.append(v)
+    if not nums:
+        return None
+    # 소수점 포함값 우선
+    nums_sorted = sorted(nums, key=lambda x: (0 if (isinstance(x, float) and x != int(x)) else 1, -x))
+    return float(nums_sorted[0])
+
+def _easyocr_candidates(pil_image: Image.Image):
     reader = _reader()
-    rgb = pil_image.convert("RGB")
-    arr = np.array(rgb)
-    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-
+    arr = np.array(pil_image.convert("RGB"))
     H, W = arr.shape[:2]
-    top = gray[: int(H*0.55), :]
-    bot = gray[int(H*0.55):, :]
+    top = arr[: int(H * 0.55), :, :]     # 온도 ROI
+    bot = arr[int(H * 0.55) :, :, :]     # 습도 ROI
 
-    top_bw = _preprocess(top)
-    bot_bw = _preprocess(bot)
+    # 숫자 위주
+    top_txts = reader.readtext(top, detail=0, paragraph=True, allowlist="0123456789.,°Cc")
+    bot_txts = reader.readtext(bot, detail=0, paragraph=True, allowlist="0123456789.%")
 
-    # EasyOCR: 숫자 화이트리스트
-    top_txts = reader.readtext(top_bw, detail=0, paragraph=True, allowlist="0123456789.,-")
-    bot_txts = reader.readtext(bot_bw, detail=0, paragraph=True, allowlist="0123456789.%")
+    t_ez = _best_number(top_txts, allow_percent=False)
+    h_ez = _best_number(bot_txts, allow_percent=True)
+    # Gemini 힌트로 주기 위해 원시 토큰도 넘겨둠
+    return t_ez, h_ez, (top_txts or []), (bot_txts or [])
 
-    all_txts = reader.readtext(arr, detail=0, paragraph=True)
-    all_raw = "\n".join(map(str, all_txts)) if isinstance(all_txts, list) else str(all_txts)
-    date_str = _extract_date(all_raw)
+# ── Gemini 준비 ────────────────────────────────────────────────────────────
+@st.cache_resource(show_spinner=False)
+def _gemini_model():
+    import google.generativeai as genai
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    model_name = st.secrets.get("GEMINI_MODEL", "gemini-1.5-flash")
+    return genai.GenerativeModel(model_name)
 
-    t = _best_number_from_texts(top_txts, allow_percent=False)
-    h = _best_number_from_texts(bot_txts, allow_percent=True)
+def _ask_gemini_for_final(pil_image: Image.Image, t_ez, h_ez, top_tokens, bot_tokens):
+    """
+    EasyOCR 후보 + 이미지 → Gemini에 던져 '정답' JSON 받기
+    """
+    model = _gemini_model()
+    buf = io.BytesIO()
+    pil_image.save(buf, format="PNG")
+    img_part = {"mime_type": "image/png", "data": buf.getvalue()}
 
-    # 1차 결과가 불량이면 Gemini 폴백
-    if not _validate(t, h):
-        gt, gh = _gemini_fallback(img_bytes)
-        if _validate(gt, gh):
-            t, h = gt, gh
+    # 후보/토큰은 힌트로 제공하되, 최종 책임은 Gemini에 위임
+    hint = {
+        "easyocr_hint": {"temperature": t_ez, "humidity": h_ez},
+        "top_roi_tokens": top_tokens[:6],   # 너무 길면 잘라서 힌트만
+        "bot_roi_tokens": bot_tokens[:6],
+    }
 
-    pretty = f"{t:.1f} / {h:.1f}" if _validate(t, h) else None
+    prompt = f"""
+다음 이미지는 디지털 온습도계 사진입니다.
+EasyOCR이 추정한 후보값 및 ROI 토큰 힌트를 참고하되, 당신이 최종 정답을 판단하세요.
+오직 온도(섭씨 ℃)와 습도(%) 숫자만 JSON으로 반환합니다.
+
+반드시 이 형식의 '순수 JSON'만 출력:
+{{"temperature": 23.5, "humidity": 58}}
+
+규칙:
+- 단위기호(℃, %)는 제거하고 숫자만.
+- 소수점이 보이면 반영.
+- EasyOCR 후보가 틀리면 무시하고 이미지로 판단.
+- 설명/코드블록/추가키 금지. JSON 외 문자 금지.
+
+[힌트]
+{json.dumps(hint, ensure_ascii=False)}
+"""
+
+    resp = model.generate_content([prompt, img_part])
+    return (resp.text or "").strip()
+
+def run_ocr(pil_image: Image.Image) -> dict:
+    # 1) EasyOCR로 후보 추출
+    t_ez, h_ez, top_tokens, bot_tokens = _easyocr_candidates(pil_image)
+
+    # 2) Gemini가 최종 판단
+    text = _ask_gemini_for_final(pil_image, t_ez, h_ez, top_tokens, bot_tokens)
+
+    # 3) JSON 파싱 → 실패 시 EasyOCR 폴백
+    t = h = None
+    try:
+        data = json.loads(text)
+        t = _norm_num(data.get("temperature"))
+        h = _norm_num(data.get("humidity"))
+    except Exception:
+        # 폴백: EasyOCR 후보라도 쓰자
+        t, h = t_ez, h_ez
+
+    pretty = f"{t:g} / {h:g}" if (t is not None and h is not None) else None
     return {
-        "raw_text": "",
-        "pretty": pretty,
-        "date": date_str,
+        "raw_text": "",       # UI 비노출
+        "pretty": pretty,     # "28.1 / 58" 등
+        "date": None,         # 날짜는 요구 없음
         "temperature": t,
         "humidity": h,
     }
