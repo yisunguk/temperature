@@ -6,7 +6,7 @@ import pandas as pd
 from PIL import Image
 from typing import Optional, Tuple
 from datetime import datetime
-from storage import replace_all  # ← 선택 삭제 후 시트에 반영
+from storage import replace_all  # 삭제 후 시트 갱신에 사용
 
 
 def render_header():
@@ -111,7 +111,6 @@ def _extract_drive_file_id(url: str) -> Optional[str]:
         m = re.search(p, url)
         if m:
             return m.group(1)
-    # fallback
     if isinstance(url, str) and "/file/d/" in url:
         try:
             return url.split("/file/d/")[1].split("/")[0]
@@ -147,14 +146,10 @@ def _heat_index_celsius(temp_c: Optional[float], rh: Optional[float]) -> Optiona
     if math.isnan(T) or math.isnan(R):
         return None
 
-    # 경계 조건: 공식 적용 조건 미만이면 실제온도 반환
     if T < 26.7 or R < 40:
         return round(T, 1)
 
-    # 섭씨 → 화씨
     Tf = T * 9.0 / 5.0 + 32.0
-
-    # Rothfusz regression (NWS)
     HI_f = (
         -42.379 + 2.04901523 * Tf + 10.14333127 * R
         - 0.22475541 * Tf * R - 0.00683783 * Tf * Tf
@@ -162,13 +157,11 @@ def _heat_index_celsius(temp_c: Optional[float], rh: Optional[float]) -> Optiona
         + 0.00085282 * Tf * R * R - 0.00000199 * Tf * Tf * R * R
     )
 
-    # 저습/고습 보정
     if (R < 13) and (80 <= Tf <= 112):
         HI_f -= ((13 - R) / 4) * math.sqrt((17 - abs(Tf - 95)) / 17)
     elif (R > 85) and (80 <= Tf <= 87):
         HI_f += ((R - 85) / 10) * ((87 - Tf) / 5)
 
-    # 화씨 → 섭씨
     HI_c = (HI_f - 32.0) * 5.0 / 9.0
     return round(HI_c, 1)
 
@@ -202,18 +195,16 @@ def _alarm_from_hi(hi_c: Optional[float]) -> str:
 def table_view(df: pd.DataFrame):
     st.subheader("저장된 데이터")
 
-    # 계산 가능한 경우, 습도 옆에 '체감온도(℃)'와 '알람'을 끼워 넣어 표시 + 삭제 체크박스
+    # 계산 후 표 + 삭제 체크박스
     has_cols = {"일자", "온도(℃)", "습도(%)"}.issubset(set(df.columns))
     if has_cols and not df.empty:
         df = df.copy()
 
-        # 체감온도/알람 계산(시트에 없던 예전 데이터도 화면에서 자동 계산)
-        df["체감온도(℃)"] = [
-            _heat_index_celsius(t, h) for t, h in zip(df["온도(℃)"], df["습도(%)"])
-        ]
+        # 체감온도/알람 계산
+        df["체감온도(℃)"] = [_heat_index_celsius(t, h) for t, h in zip(df["온도(℃)"], df["습도(%)"])]
         df["알람"] = [_alarm_from_hi(v) for v in df["체감온도(℃)"]]
 
-        # 썸네일 / 링크
+        # 썸네일/링크
         if "사진URL" in df.columns:
             df["사진썸네일"] = df["사진URL"].apply(_to_thumbnail_url)
             df["원본열기"] = df["사진URL"]
@@ -221,42 +212,46 @@ def table_view(df: pd.DataFrame):
             df["사진썸네일"] = None
             df["원본열기"] = ""
 
-        # 표시 컬럼 + 삭제 체크박스
         show_cols = ["일자", "온도(℃)", "습도(%)", "체감온도(℃)", "알람", "사진썸네일", "원본열기"]
         show_df = df[show_cols].copy()
-        show_df["삭제"] = False  # 기본은 미선택
 
-        # 편집 가능 컬럼은 '삭제'만 허용
-        disable_cols = [c for c in show_df.columns if c != "삭제"]
+        # ✅ 체크박스 컬럼 생성(반드시 bool dtype)
+        if "삭제" not in show_df.columns:
+            show_df["삭제"] = pd.Series([False] * len(show_df), dtype="bool")
+        else:
+            show_df["삭제"] = show_df["삭제"].fillna(False).astype("bool")
 
+        # 컬럼별로 disabled 설정(체크박스만 편집 가능)
         edited = st.data_editor(
             show_df,
+            key="data_table",
             hide_index=True,
             width="stretch",
             column_config={
-                "온도(℃)": st.column_config.NumberColumn("온도(℃)", format="%.1f"),
-                "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100),
+                "온도(℃)": st.column_config.NumberColumn("온도(℃)", format="%.1f", disabled=True),
+                "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100, disabled=True),
                 "체감온도(℃)": st.column_config.NumberColumn("체감온도(℃)", format="%.1f",
-                                                      help="온도와 습도로 계산된 Heat Index(체감온도)"),
-                "알람": st.column_config.TextColumn("알람", help="관심/주의/경고/위험 (KOSHA 산출표 기준)"),
-                "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small"),
-                "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기"),
-                "삭제": st.column_config.CheckboxColumn("삭제", help="체크한 행을 삭제"),
+                                                      help="온도와 습도로 계산된 Heat Index(체감온도)",
+                                                      disabled=True),
+                "알람": st.column_config.TextColumn("알람", help="관심/주의/경고/위험 (KOSHA 산출표 기준)", disabled=True),
+                "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small", disabled=True),
+                "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기", disabled=True),
+                "삭제": st.column_config.CheckboxColumn("삭제", help="삭제할 행을 체크", default=False),
             },
-            disabled=disable_cols,
+            # ⚠️ 전체 disabled를 리스트로 주면 전부 비활성화됩니다. 여기선 False로 둡니다.
+            disabled=False,
         )
 
-        # ⛔ 선택 삭제 버튼
         if st.button("🗑️ 선택 행 삭제", type="secondary"):
-            if "삭제" not in edited.columns or not edited["삭제"].any():
+            rm = edited["삭제"].fillna(False)
+            if not rm.any():
                 st.warning("삭제할 행을 선택해 주세요.")
             else:
-                keep = ~edited["삭제"].fillna(False)
+                keep = ~rm
                 to_save = edited.loc[keep, ["일자", "온도(℃)", "습도(%)", "체감온도(℃)", "알람", "원본열기"]].copy()
                 to_save.rename(columns={"원본열기": "사진URL"}, inplace=True)
-                # 시트 전체 덮어쓰기
                 replace_all(to_save)
-                st.success(f"{(~keep).sum()}개의 행을 삭제하고 시트를 갱신했습니다.")
+                st.success(f"{rm.sum()}개의 행을 삭제하고 시트를 갱신했습니다.")
                 st.rerun()
         return
 
@@ -267,33 +262,37 @@ def table_view(df: pd.DataFrame):
         df["원본열기"] = df["사진URL"]
         show_cols = [c for c in ["일자", "온도(℃)", "습도(%)", "사진썸네일", "원본열기"] if c in df.columns]
         show_df = df[show_cols].copy()
-        show_df["삭제"] = False
-        disable_cols = [c for c in show_df.columns if c != "삭제"]
+
+        if "삭제" not in show_df.columns:
+            show_df["삭제"] = pd.Series([False] * len(show_df), dtype="bool")
+        else:
+            show_df["삭제"] = show_df["삭제"].fillna(False).astype("bool")
 
         edited = st.data_editor(
             show_df,
+            key="data_table_simple",
             hide_index=True,
             width="stretch",
             column_config={
-                "온도(℃)": st.column_config.NumberColumn("온도(℃)", format="%.1f"),
-                "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100),
-                "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small"),
-                "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기"),
-                "삭제": st.column_config.CheckboxColumn("삭제", help="체크한 행을 삭제"),
+                "온도(℃)": st.column_config.NumberColumn("온도(℃)", format="%.1f", disabled=True),
+                "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100, disabled=True),
+                "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small", disabled=True),
+                "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기", disabled=True),
+                "삭제": st.column_config.CheckboxColumn("삭제", help="삭제할 행을 체크", default=False),
             },
-            disabled=disable_cols,
+            disabled=False,
         )
 
         if st.button("🗑️ 선택 행 삭제", type="secondary"):
-            if "삭제" not in edited.columns or not edited["삭제"].any():
+            rm = edited["삭제"].fillna(False)
+            if not rm.any():
                 st.warning("삭제할 행을 선택해 주세요.")
             else:
-                keep = ~edited["삭제"].fillna(False)
-                # 체감온도/알람 컬럼이 없는 시트 구조를 유지
+                keep = ~rm
                 to_save = edited.loc[keep, ["일자", "온도(℃)", "습도(%)", "원본열기"]].copy()
                 to_save.rename(columns={"원본열기": "사진URL"}, inplace=True)
                 replace_all(to_save)
-                st.success(f"{(~keep).sum()}개의 행을 삭제하고 시트를 갱신했습니다.")
+                st.success(f"{rm.sum()}개의 행을 삭제하고 시트를 갱신했습니다.")
                 st.rerun()
     else:
         st.dataframe(df, width="stretch")
