@@ -7,9 +7,7 @@ from PIL import Image
 from typing import Optional, Tuple
 from datetime import datetime
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 헤더 / 입력
-# ──────────────────────────────────────────────────────────────────────────────
+
 def render_header():
     st.title("실외 온도/습도 기록기")
     st.caption("카메라 촬영 또는 이미지 업로드 → OCR → 표 저장 (Google Sheets + Drive)")
@@ -95,6 +93,7 @@ def extracted_edit_fields(initial_date: str, initial_temp, initial_hum):
     st.caption("※ 값을 확인/수정한 다음, 아래 **저장 (Drive + Sheet)** 버튼을 눌러 저장합니다.")
     return date_str, float(temp), float(hum)
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Google Drive 썸네일/링크 유틸
 # ──────────────────────────────────────────────────────────────────────────────
@@ -111,6 +110,7 @@ def _extract_drive_file_id(url: str) -> Optional[str]:
         m = re.search(p, url)
         if m:
             return m.group(1)
+    # fallback
     if isinstance(url, str) and "/file/d/" in url:
         try:
             return url.split("/file/d/")[1].split("/")[0]
@@ -123,6 +123,7 @@ def _to_thumbnail_url(view_url: str) -> Optional[str]:
     """fileId로 썸네일 URL 생성."""
     fid = _extract_drive_file_id(view_url)
     return f"https://drive.google.com/thumbnail?id={fid}" if fid else None
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 체감온도(Heat Index, 섭씨) 계산 + KOSHA 구간 분류
@@ -145,10 +146,14 @@ def _heat_index_celsius(temp_c: Optional[float], rh: Optional[float]) -> Optiona
     if math.isnan(T) or math.isnan(R):
         return None
 
+    # 경계 조건: 공식 적용 조건 미만이면 실제온도 반환
     if T < 26.7 or R < 40:
         return round(T, 1)
 
+    # 섭씨 → 화씨
     Tf = T * 9.0 / 5.0 + 32.0
+
+    # Rothfusz regression (NWS)
     HI_f = (
         -42.379 + 2.04901523 * Tf + 10.14333127 * R
         - 0.22475541 * Tf * R - 0.00683783 * Tf * Tf
@@ -156,30 +161,24 @@ def _heat_index_celsius(temp_c: Optional[float], rh: Optional[float]) -> Optiona
         + 0.00085282 * Tf * R * R - 0.00000199 * Tf * Tf * R * R
     )
 
+    # 저습/고습 보정
     if (R < 13) and (80 <= Tf <= 112):
         HI_f -= ((13 - R) / 4) * math.sqrt((17 - abs(Tf - 95)) / 17)
     elif (R > 85) and (80 <= Tf <= 87):
         HI_f += ((R - 85) / 10) * ((87 - Tf) / 5)
 
+    # 화씨 → 섭씨
     HI_c = (HI_f - 32.0) * 5.0 / 9.0
     return round(HI_c, 1)
 
 
-def _alarm_from_hi(hi_c: Optional[float]) -> str:
-    """
-    KOSHA 체감온도 산출표 구간:
-    - < 32: "" (무표시)
-    - 32–34.9: 관심
-    - 35–37.9: 주의
-    - 38–39.9: 경고
-    - ≥ 40: 위험
-    """
+def _alarm_from_hi(hi_c: Optional[float], show_normal: bool = True) -> str:
     if hi_c is None:
-        return ""
+        return "정상" if show_normal else ""
     try:
         x = float(hi_c)
     except Exception:
-        return ""
+        return "정상" if show_normal else ""
     if x >= 40:
         return "위험"
     if x >= 38:
@@ -188,143 +187,71 @@ def _alarm_from_hi(hi_c: Optional[float]) -> str:
         return "주의"
     if x >= 32:
         return "관심"
-    return ""
+    return "정상" if show_normal else ""
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 표 렌더링 (+ 세션 내 삭제 기능)
-# ──────────────────────────────────────────────────────────────────────────────
-def _row_key(series: pd.Series) -> str:
-    """세션 내 삭제 추적을 위한 고유 키(내용 기반)."""
-    return "|".join([
-        str(series.get("일자", "")),
-        str(series.get("온도(℃)", "")),
-        str(series.get("습도(%)", "")),
-        str(series.get("사진URL", series.get("원본열기", ""))),
-    ])
 
 def table_view(df: pd.DataFrame):
     st.subheader("저장된 데이터")
 
-    # 세션 상태에 삭제 키 저장소 초기화
-    if "__hidden_row_keys__" not in st.session_state:
-        st.session_state["__hidden_row_keys__"] = set()
-
+    # 계산 가능한 경우, 습도 옆에 '체감온도(℃)'와 '알람'을 끼워 넣어 표시
     has_cols = {"일자", "온도(℃)", "습도(%)"}.issubset(set(df.columns))
     if has_cols and not df.empty:
         df = df.copy()
 
-        # 체감온도/알람 계산
-        df["체감온도(℃)"] = [_heat_index_celsius(t, h) for t, h in zip(df["온도(℃)"], df["습도(%)"])]
+        # 체감온도 계산
+        df["체감온도(℃)"] = [
+            _heat_index_celsius(t, h) for t, h in zip(df["온도(℃)"], df["습도(%)"])
+        ]
+        # 알람 분류
         df["알람"] = [_alarm_from_hi(v) for v in df["체감온도(℃)"]]
 
-        # 썸네일/링크
+        # 썸네일/링크 처리 (있을 때만)
         if "사진URL" in df.columns:
             df["사진썸네일"] = df["사진URL"].apply(_to_thumbnail_url)
-            df["원본열기"] = df["사진URL"]
-        else:
-            df["사진썸네일"] = None
-            df["원본열기"] = ""
+            df["원본열기"] = df["사진URL"].apply(lambda u: u if isinstance(u, str) and u else "")
 
-        # 삭제 키 생성
-        df["__key__"] = df.apply(_row_key, axis=1)
+        # 컬럼 순서: 일자, 온도, 습도, (체감온도, 알람), 사진썸네일, 원본열기
+        view_cols = ["일자", "온도(℃)", "습도(%)", "체감온도(℃)", "알람"]
+        if "사진썸네일" in df.columns:
+            view_cols += ["사진썸네일"]
+        if "원본열기" in df.columns:
+            view_cols += ["원본열기"]
+        view_cols = [c for c in view_cols if c in df.columns]
 
-        # ▶ 세션에서 숨긴 행 제외
-        hidden = st.session_state["__hidden_row_keys__"]
-        visible_df = df[~df["__key__"].isin(hidden)].reset_index(drop=True)
-
-        # 표시용 데이터프레임 구성
-        show_cols = ["일자", "온도(℃)", "습도(%)", "체감온도(℃)", "알람", "사진썸네일", "원본열기"]
-        show_cols = [c for c in show_cols if c in visible_df.columns]
-        show_df = visible_df[show_cols].copy()
-
-        # 체크박스 컬럼 (UI에서만 사용)
-        show_df["삭제"] = pd.Series([False] * len(show_df), dtype="bool")
-
-        # 편집 설정: 체크박스만 편집 가능
-        edited = st.data_editor(
-            show_df,
-            key="data_table",
+        st.data_editor(
+            df[view_cols],
             hide_index=True,
             width="stretch",
             column_config={
-                "온도(℃)": st.column_config.NumberColumn("온도(℃)", format="%.1f", disabled=True),
-                "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100, disabled=True),
+                "온도(℃)": st.column_config.NumberColumn("온도(℃)", format="%.1f"),
+                "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100),
                 "체감온도(℃)": st.column_config.NumberColumn("체감온도(℃)", format="%.1f",
-                                                      help="온도와 습도로 계산된 Heat Index(체감온도)",
-                                                      disabled=True),
-                "알람": st.column_config.TextColumn("알람", help="관심/주의/경고/위험 (KOSHA 산출표 기준)", disabled=True),
-                "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small", disabled=True),
-                "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기", disabled=True),
-                "삭제": st.column_config.CheckboxColumn("삭제", help="체크한 행을 화면에서만 삭제", default=False),
+                                                      help="온도와 습도로 계산된 Heat Index(체감온도)"),
+                "알람": st.column_config.TextColumn("알람", help="관심/주의/경고/위험 (KOSHA 산출표 기준)"),
+                "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small"),
+                "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기"),
             },
-            disabled=False,
+            disabled=True,  # 목록은 읽기 전용 (편집은 입력 영역에서)
         )
-
-        # 삭제 버튼 (시트는 수정하지 않음)
-        col_del, col_restore = st.columns([1,1])
-        with col_del:
-            if st.button("🗑️ 선택 행 삭제(표에서만)", type="secondary"):
-                rm_flags = edited["삭제"].fillna(False).tolist()
-                keys_visible = visible_df["__key__"].tolist()
-                selected_keys = {k for k, flag in zip(keys_visible, rm_flags) if flag}
-                if not selected_keys:
-                    st.warning("삭제할 행을 선택해 주세요.")
-                else:
-                    st.session_state["__hidden_row_keys__"].update(selected_keys)
-                    st.success(f"{len(selected_keys)}개 행을 표에서 숨겼습니다. (시트는 유지)")
-                    st.rerun()
-        with col_restore:
-            if st.button("↩️ 숨긴 행 모두 복구"):
-                st.session_state["__hidden_row_keys__"] = set()
-                st.success("모든 숨김을 해제했습니다.")
-                st.rerun()
         return
 
     # 사진URL만 있는 기존 케이스(또는 비어 있음)
     if "사진URL" in df.columns and not df.empty:
         df = df.copy()
         df["사진썸네일"] = df["사진URL"].apply(_to_thumbnail_url)
-        df["원본열기"] = df["사진URL"]
-        df["__key__"] = df.apply(_row_key, axis=1)
-
-        hidden = st.session_state["__hidden_row_keys__"]
-        visible_df = df[~df["__key__"].isin(hidden)].reset_index(drop=True)
-
-        show_cols = [c for c in ["일자", "온도(℃)", "습도(%)", "사진썸네일", "원본열기"] if c in visible_df.columns]
-        show_df = visible_df[show_cols].copy()
-        show_df["삭제"] = pd.Series([False] * len(show_df), dtype="bool")
-
-        edited = st.data_editor(
-            show_df,
-            key="data_table_simple",
+        df["원본열기"] = df["사진URL"].apply(lambda u: u if isinstance(u, str) and u else "")
+        cols = [c for c in ["일자", "온도(℃)", "습도(%)", "사진썸네일", "원본열기"] if c in df.columns]
+        st.data_editor(
+            df[cols],
             hide_index=True,
             width="stretch",
             column_config={
-                "온도(℃)": st.column_config.NumberColumn("온도(℃)", format="%.1f", disabled=True),
-                "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100, disabled=True),
-                "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small", disabled=True),
-                "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기", disabled=True),
-                "삭제": st.column_config.CheckboxColumn("삭제", help="체크한 행을 화면에서만 삭제", default=False),
+                "온도(℃)": st.column_config.NumberColumn("온도(℃)", format="%.1f"),
+                "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100),
+                "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small"),
+                "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기"),
             },
-            disabled=False,
+            disabled=True,
         )
-
-        col_del, col_restore = st.columns([1,1])
-        with col_del:
-            if st.button("🗑️ 선택 행 삭제(표에서만)", type="secondary"):
-                rm_flags = edited["삭제"].fillna(False).tolist()
-                keys_visible = visible_df["__key__"].tolist()
-                selected_keys = {k for k, flag in zip(keys_visible, rm_flags) if flag}
-                if not selected_keys:
-                    st.warning("삭제할 행을 선택해 주세요.")
-                else:
-                    st.session_state["__hidden_row_keys__"].update(selected_keys)
-                    st.success(f"{len(selected_keys)}개 행을 표에서 숨겼습니다. (시트는 유지)")
-                    st.rerun()
-        with col_restore:
-            if st.button("↩️ 숨긴 행 모두 복구"):
-                st.session_state["__hidden_row_keys__"] = set()
-                st.success("모든 숨김을 해제했습니다.")
-                st.rerun()
     else:
         st.dataframe(df, width="stretch")
