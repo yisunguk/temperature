@@ -1,6 +1,7 @@
 # app.py
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import math
 import streamlit as st
 from oauth_google import ensure_user_drive_creds, logout_button
 from ui import render_header, input_panel, extracted_edit_fields, table_view
@@ -18,6 +19,49 @@ def _to_float(x):
         return float(x) if x not in (None, "") else None
     except Exception:
         return None
+
+# ── Heat Index(체감온도) 계산 + 알람 분류 ───────────────────────────────────────
+def _heat_index_celsius(temp_c, rh):
+    try:
+        if temp_c is None or rh is None:
+            return None
+        T = float(temp_c); R = float(rh)
+    except Exception:
+        return None
+    if math.isnan(T) or math.isnan(R):
+        return None
+    # 적용 조건 미만이면 실제온도 반환
+    if T < 26.7 or R < 40:
+        return round(T, 1)
+    Tf = T * 9.0 / 5.0 + 32.0
+    HI_f = (
+        -42.379 + 2.04901523 * Tf + 10.14333127 * R
+        - 0.22475541 * Tf * R - 0.00683783 * Tf * Tf
+        - 0.05481717 * R * R + 0.00122874 * Tf * Tf * R
+        + 0.00085282 * Tf * R * R - 0.00000199 * Tf * Tf * R * R
+    )
+    if (R < 13) and (80 <= Tf <= 112):
+        HI_f -= ((13 - R) / 4) * math.sqrt((17 - abs(Tf - 95)) / 17)
+    elif (R > 85) and (80 <= Tf <= 87):
+        HI_f += ((R - 85) / 10) * ((87 - Tf) / 5)
+    return round((HI_f - 32.0) * 5.0 / 9.0, 1)
+
+def _alarm_from_hi(hi_c):
+    if hi_c is None:
+        return ""
+    try:
+        x = float(hi_c)
+    except Exception:
+        return ""
+    if x >= 40:
+        return "위험"
+    if x >= 38:
+        return "경고"
+    if x >= 35:
+        return "주의"
+    if x >= 32:
+        return "관심"
+    return ""
 
 
 def main():
@@ -47,7 +91,6 @@ def main():
         except Exception:
             st.write("cookie_present: N/A")
 
-
     # 이미지 입력 (카메라/업로드)
     pil_img, img_bytes, src = input_panel()
     if img_bytes:
@@ -70,7 +113,7 @@ def main():
             st.metric("온도(℃)", f"{result['temperature']:.1f}" if result['temperature'] is not None else "-")
         with col2:
             st.metric("습도(%)", f"{result['humidity']:.1f}" if result['humidity'] is not None else "-")
-    
+
     # ✔ 폼은 값 편집만 담당 (저장 버튼은 폼 밖에서!)
     date_str, temp, hum = extracted_edit_fields(
         result.get("date"),
@@ -99,8 +142,14 @@ def main():
                 filename_prefix="env_photo",
                 mime_type=mime,
             )
-            # 시트 한 줄 추가 (서비스계정)
-            append_row(date_str, _to_float(temp), _to_float(hum), link)
+            # ▶ Heat Index + 알람 계산
+            t = _to_float(temp)
+            h = _to_float(hum)
+            hi = _heat_index_celsius(t, h)
+            alarm = _alarm_from_hi(hi)
+
+            # ▶ 시트 한 줄 추가 (체감온도/알람 포함)
+            append_row(date_str, t, h, hi, alarm, link)  # ← 확장된 시그니처
             st.toast("저장 완료! 테이블을 새로고침합니다.", icon="✅")
             st.rerun()
         except Exception as e:

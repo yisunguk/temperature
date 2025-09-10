@@ -13,6 +13,8 @@ from gspread_dataframe import set_with_dataframe
 SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 DRIVE_SCOPES  = ["https://www.googleapis.com/auth/drive"]
 
+SHEET_COLUMNS = ["일자", "온도(℃)", "습도(%)", "체감온도(℃)", "알람", "사진URL"]
+
 def _cfg(key: str, default=None):
     """항상 최신 secrets 값을 읽는다."""
     return st.secrets.get(key, default)
@@ -52,23 +54,46 @@ def get_or_create_worksheet():
         ws = sh.worksheet(ws_name)
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(title=ws_name, rows=200, cols=10)
-        ws.update("A1:D1", [["일자", "온도(℃)", "습도(%)", "사진URL"]])
+        # 헤더에 체감온도/알람 포함
+        ws.update("A1:F1", [SHEET_COLUMNS])
     return ws
+
+def _ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """표시/저장을 위해 필요한 컬럼이 없으면 채워넣는다."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=SHEET_COLUMNS)
+    for c in SHEET_COLUMNS:
+        if c not in df.columns:
+            df[c] = None
+    # 보기 좋은 순서로 재정렬
+    df = df.reindex(columns=SHEET_COLUMNS)
+    return df
 
 def read_dataframe() -> pd.DataFrame:
     ws = get_or_create_worksheet()
     data = ws.get_all_records()
     df = pd.DataFrame(data)
-    if df.empty:
-        df = pd.DataFrame(columns=["일자", "온도(℃)", "습도(%)", "사진URL"])
+    # 기존 4열 시트도 안전하게 업그레이드
+    df = _ensure_columns(df)
     return df
 
-def append_row(date_str: str, temp: Optional[float], humid: Optional[float], image_url: str):
+def append_row(date_str: str,
+               temp: Optional[float],
+               humid: Optional[float],
+               heat_index: Optional[float],
+               alarm: str,
+               image_url: str):
+    """
+    시트에 한 줄 추가 (체감온도/알람 포함).
+    기존 4열 시트에서도 자동으로 열이 확장됩니다.
+    """
     ws = get_or_create_worksheet()
-    ws.append_row([date_str, temp, humid, image_url], value_input_option="USER_ENTERED")
+    ws.append_row([date_str, temp, humid, heat_index, alarm, image_url], value_input_option="USER_ENTERED")
 
 def replace_all(df: pd.DataFrame):
+    """전체 덮어쓰기(필요 시 사용)."""
     ws = get_or_create_worksheet()
+    df = _ensure_columns(df)
     ws.clear()
     set_with_dataframe(ws, df)
 
@@ -86,7 +111,6 @@ def upload_image_to_drive(image_bytes: bytes, filename_prefix="photo", mime_type
         body={"name": filename, "parents": [folder_id]},
         media_body=media,
         fields="id, webViewLink, webContentLink",
-        # supportsAllDrives=True,  # 공유 드라이브를 쓴다면 주석 해제
     ).execute()
 
     file_id = file["id"]
@@ -134,7 +158,6 @@ def diagnose_permissions():
     except Exception:
         info["gsheets_sa"] = "(missing [gsheet_service_account] in secrets)"
 
-    # SHEET_ID 없으면 바로 원인 리턴
     if not info["sheet_id"]:
         info["open_by_key_ok"] = False
         info["error"] = "SHEET_ID is missing in secrets.toml"

@@ -1,5 +1,6 @@
 # ui.py
 import re
+import math
 import streamlit as st
 import pandas as pd
 from PIL import Image
@@ -110,7 +111,7 @@ def _extract_drive_file_id(url: str) -> Optional[str]:
         if m:
             return m.group(1)
     # fallback: /file/d/ 가 있으나 슬래시 파싱이 실패했을 때
-    if "/file/d/" in url:
+    if isinstance(url, str) and "/file/d/" in url:
         try:
             return url.split("/file/d/")[1].split("/")[0]
         except Exception:
@@ -124,16 +125,106 @@ def _to_thumbnail_url(view_url: str) -> Optional[str]:
     return f"https://drive.google.com/thumbnail?id={fid}" if fid else None
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 체감온도 계산(Heat Index, 섭씨) + KOSHA 구간 분류
+# ──────────────────────────────────────────────────────────────────────────────
+def _heat_index_celsius(temp_c: Optional[float], rh: Optional[float]) -> Optional[float]:
+    """
+    Rothfusz 회귀(미국 NWS) 기반 Heat Index 계산.
+    - 입력: 건구온도(℃), 상대습도(%)
+    - 출력: 체감온도(℃)
+    - 참고: 공식은 화씨에서 정의되어 있어 섭씨↔화씨 변환 사용.
+    - 일반적으로 T<26.7℃ 또는 RH<40%에서는 HI≈T로 간주.
+    """
+    try:
+        if temp_c is None or rh is None:
+            return None
+        T = float(temp_c)
+        R = float(rh)
+    except Exception:
+        return None
+
+    if math.isnan(T) or math.isnan(R):
+        return None
+
+    # 경계 조건: 공식 적용 조건 미만이면 실제온도 반환
+    if T < 26.7 or R < 40:
+        return round(T, 1)
+
+    # 섭씨 → 화씨
+    Tf = T * 9.0 / 5.0 + 32.0
+
+    # Rothfusz regression (NWS)
+    HI_f = (
+        -42.379 + 2.04901523 * Tf + 10.14333127 * R
+        - 0.22475541 * Tf * R - 0.00683783 * Tf * Tf
+        - 0.05481717 * R * R + 0.00122874 * Tf * Tf * R
+        + 0.00085282 * Tf * R * R - 0.00000199 * Tf * Tf * R * R
+    )
+
+    # 보정항(저습·고습)의 간단 적용
+    if (R < 13) and (80 <= Tf <= 112):
+        HI_f -= ((13 - R) / 4) * math.sqrt((17 - abs(Tf - 95)) / 17)
+    elif (R > 85) and (80 <= Tf <= 87):
+        HI_f += ((R - 85) / 10) * ((87 - Tf) / 5)
+
+    # 화씨 → 섭씨
+    HI_c = (HI_f - 32.0) * 5.0 / 9.0
+    return round(HI_c, 1)
+
+
+def _alarm_from_hi(hi_c: Optional[float]) -> str:
+    """
+    KOSHA 체감온도 산출표의 구간에 따라 알람 분류:
+    - < 32: "" (무표시)
+    - 32–34.9: 관심
+    - 35–37.9: 주의
+    - 38–39.9: 경고
+    - ≥ 40: 위험
+    """
+    if hi_c is None:
+        return ""
+    try:
+        x = float(hi_c)
+    except Exception:
+        return ""
+    if x >= 40:
+        return "위험"
+    if x >= 38:
+        return "경고"
+    if x >= 35:
+        return "주의"
+    if x >= 32:
+        return "관심"
+    return ""
+
+
 def table_view(df: pd.DataFrame):
     st.subheader("저장된 데이터")
 
-    # 사진URL이 있으면 썸네일+원본열기로 가공해서 data_editor로 표시
-    if "사진URL" in df.columns and not df.empty:
+    # 계산 가능한 경우, 습도 옆에 '체감온도(℃)'와 '알람'을 끼워 넣어 표시
+    has_cols = {"일자", "온도(℃)", "습도(%)"}.issubset(set(df.columns))
+    if has_cols and not df.empty:
         df = df.copy()
-        df["사진썸네일"] = df["사진URL"].apply(_to_thumbnail_url)
-        df["원본열기"] = df["사진URL"].apply(lambda u: u if isinstance(u, str) and u else "")
 
-        view_cols = ["일자", "온도(℃)", "습도(%)", "사진썸네일", "원본열기"]
+        # 체감온도 계산
+        df["체감온도(℃)"] = [
+            _heat_index_celsius(t, h) for t, h in zip(df["온도(℃)"], df["습도(%)"])
+        ]
+        # 알람 분류
+        df["알람"] = [ _alarm_from_hi(v) for v in df["체감온도(℃)"] ]
+
+        # 썸네일/링크 처리 (있을 때만)
+        if "사진URL" in df.columns:
+            df["사진썸네일"] = df["사진URL"].apply(_to_thumbnail_url)
+            df["원본열기"] = df["사진URL"].apply(lambda u: u if isinstance(u, str) and u else "")
+
+        # 컬럼 순서: 일자, 온도, 습도, (체감온도, 알람), 사진썸네일, 원본열기
+        view_cols = ["일자", "온도(℃)", "습도(%)", "체감온도(℃)", "알람"]
+        if "사진썸네일" in df.columns:
+            view_cols += ["사진썸네일"]
+        if "원본열기" in df.columns:
+            view_cols += ["원본열기"]
         view_cols = [c for c in view_cols if c in df.columns]
 
         st.data_editor(
@@ -141,13 +232,35 @@ def table_view(df: pd.DataFrame):
             hide_index=True,
             width="stretch",
             column_config={
-                "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small"),
-                "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기"),
                 "온도(℃)": st.column_config.NumberColumn("온도(℃)", format="%.1f"),
                 "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100),
+                "체감온도(℃)": st.column_config.NumberColumn("체감온도(℃)", format="%.1f",
+                                                      help="온도와 습도로 계산된 Heat Index(체감온도)"),
+                "알람": st.column_config.TextColumn("알람", help="관심/주의/경고/위험 (KOSHA 산출표 기준)"),
+                "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small"),
+                "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기"),
             },
             disabled=True,  # 목록은 읽기 전용 (편집은 입력 영역에서)
         )
+        return
+
+    # 사진URL만 있는 기존 케이스(또는 비어 있음)
+    if "사진URL" in df.columns and not df.empty:
+        df = df.copy()
+        df["사진썸네일"] = df["사진URL"].apply(_to_thumbnail_url)
+        df["원본열기"] = df["사진URL"].apply(lambda u: u if isinstance(u, str) and u else "")
+        cols = [c for c in ["일자", "온도(℃)", "습도(%)", "사진썸네일", "원본열기"] if c in df.columns]
+        st.data_editor(
+            df[cols],
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "온도(℃)": st.column_config.NumberColumn("온도(℃)", format="%.1f"),
+                "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100),
+                "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small"),
+                "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기"),
+            },
+            disabled=True,
+        )
     else:
-        # 사진URL이 없거나 데이터가 비어 있으면 기본 표로 표시
         st.dataframe(df, width="stretch")
