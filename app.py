@@ -17,6 +17,17 @@ OPEN_METEO_LAT = 34.9414   # Gwangyang
 OPEN_METEO_LON = 127.69569
 OPEN_METEO_TZ  = "Asia/Seoul"
 
+def _fmt_ts(ts: str | None) -> str:
+    if not ts:
+        return "알 수 없음"
+    try:
+        # '2025-09-10T19:15' 또는 '...:15Z' 모두 안전 처리
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        # 파싱 실패 시 T만 공백으로 치환
+        return ts.replace("T", " ")
+
+
 def fetch_current_apparent_temp(lat=OPEN_METEO_LAT, lon=OPEN_METEO_LON, tz=OPEN_METEO_TZ):
     """Open-Meteo 현재 체감온도/기온/습도 조회"""
     url = "https://api.open-meteo.com/v1/forecast"
@@ -111,12 +122,14 @@ def main():
 
         # 알림 뱃지
         color = {"정상":"#10b981","관심":"#3b82f6","주의":"#f59e0b","경고":"#ef4444","위험":"#7f1d1d"}.get(alarm_now, "#6b7280")
+        # 기존 표시 코드에서
         st.markdown(
             f"<div style='display:inline-block;padding:6px 10px;border-radius:999px;background:{color};color:white;font-weight:600'>"
             f"{alarm_now}</div> "
-            f"<span style='color:#6b7280'>기준시각: {now.get('time') or '알 수 없음'}</span>",
+            f"<span style='color:#6b7280'>기준시각: {_fmt_ts(now.get('time'))}</span>",
             unsafe_allow_html=True
-        )
+)
+
         st.divider()
     except Exception as e:
         st.info(f"현재 날씨 조회 실패: {e}")
