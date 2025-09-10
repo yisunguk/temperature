@@ -38,6 +38,16 @@ def main():
     # ✅ 사용자 OAuth 로그인 (My Drive에 업로드하기 위해)
     creds = ensure_user_drive_creds()
 
+    with st.expander("🔎 로그인 진단", expanded=False):
+        st.write("has_creds:", bool(creds and creds.valid))
+        st.write("in_session:", "__google_token__" in st.session_state)
+        try:
+            from oauth_google import cookies
+            st.write("cookie_present:", bool(cookies.get("gdrive_oauth")))
+        except Exception:
+            st.write("cookie_present: N/A")
+
+
     # 이미지 입력 (카메라/업로드)
     pil_img, img_bytes, src = input_panel()
     if img_bytes:
