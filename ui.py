@@ -9,8 +9,8 @@ from datetime import datetime
 
 
 def render_header():
-    st.title("광양 LNG Jetty 인프라 현장 체감온도 기록기")
-    st.caption("현재 광양의 체감온도)")
+    st.title("인)광양 LNG Jetty 현장 체감온도 기록기")
+    st.caption("현재 광양의 체감온도")
 
 
 def _toggle(label: str, value: bool, key: str) -> bool:

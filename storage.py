@@ -13,7 +13,8 @@ from gspread_dataframe import set_with_dataframe
 SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 DRIVE_SCOPES  = ["https://www.googleapis.com/auth/drive"]
 
-SHEET_COLUMNS = ["일자", "온도(℃)", "습도(%)", "체감온도(℃)", "알람", "사진URL"]
+# ✔ 시트 컬럼 확장: 시간, 작업장 추가
+SHEET_COLUMNS = ["일자", "시간", "온도(℃)", "습도(%)", "작업장", "체감온도(℃)", "알람", "사진URL"]
 
 def _cfg(key: str, default=None):
     """항상 최신 secrets 값을 읽는다."""
@@ -53,9 +54,9 @@ def get_or_create_worksheet():
     try:
         ws = sh.worksheet(ws_name)
     except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=ws_name, rows=200, cols=10)
-        # 헤더에 체감온도/알람 포함
-        ws.update("A1:F1", [SHEET_COLUMNS])
+        # 새 워크시트 생성 시 확장된 헤더를 기록
+        ws = sh.add_worksheet(title=ws_name, rows=200, cols=12)
+        ws.update("A1:H1", [SHEET_COLUMNS])   # ← 시간/작업장 포함 헤더
     return ws
 
 def _ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -66,29 +67,33 @@ def _ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
         if c not in df.columns:
             df[c] = None
     # 보기 좋은 순서로 재정렬
-    df = df.reindex(columns=SHEET_COLUMNS)
-    return df
+    return df.reindex(columns=SHEET_COLUMNS)
 
 def read_dataframe() -> pd.DataFrame:
     ws = get_or_create_worksheet()
     data = ws.get_all_records()
     df = pd.DataFrame(data)
-    # 기존 4열 시트도 안전하게 업그레이드
-    df = _ensure_columns(df)
-    return df
+    # 기존 시트도 안전하게 업그레이드(누락 컬럼 자동 생성)
+    return _ensure_columns(df)
 
+# ✔ 시그니처 확장: 시간, 작업장 추가
 def append_row(date_str: str,
+               time_str: str,
                temp: Optional[float],
                humid: Optional[float],
+               workplace: Optional[str],
                heat_index: Optional[float],
                alarm: str,
                image_url: str):
     """
-    시트에 한 줄 추가 (체감온도/알람 포함).
-    기존 4열 시트에서도 자동으로 열이 확장됩니다.
+    시트에 한 줄 추가 (일자/시간/작업장 + 체감온도/알람 포함).
+    기존 4~6열 시트여도 자동으로 열이 확장되도록 헤더/보정 로직과 함께 동작합니다.
     """
     ws = get_or_create_worksheet()
-    ws.append_row([date_str, temp, humid, heat_index, alarm, image_url], value_input_option="USER_ENTERED")
+    ws.append_row(
+        [date_str, time_str, temp, humid, workplace, heat_index, alarm, image_url],
+        value_input_option="USER_ENTERED"
+    )
 
 def replace_all(df: pd.DataFrame):
     """전체 덮어쓰기(필요 시 사용)."""
