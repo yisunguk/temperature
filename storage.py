@@ -1,6 +1,6 @@
 # storage.py
 import io, time
-from typing import Optional
+from typing import Optional, List
 import pandas as pd
 import streamlit as st
 import gspread
@@ -13,16 +13,16 @@ from gspread_dataframe import set_with_dataframe
 SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 DRIVE_SCOPES  = ["https://www.googleapis.com/auth/drive"]
 
-# ✔ 시트 컬럼 확장: 시간, 작업장 추가
-SHEET_COLUMNS = ["일자", "시간", "온도(℃)", "습도(%)", "작업장", "체감온도(℃)", "알람", "사진URL"]
+# ✔ 표준 헤더(시간/작업장 포함)
+SHEET_COLUMNS: List[str] = [
+    "일자", "시간", "온도(℃)", "습도(%)", "작업장", "체감온도(℃)", "알람", "사진URL"
+]
 
 def _cfg(key: str, default=None):
-    """항상 최신 secrets 값을 읽는다."""
     return st.secrets.get(key, default)
 
 def _share_public() -> bool:
     return str(_cfg("SHARE_IMAGE_PUBLIC", "false")).lower() == "true"
-
 
 # ── 서비스계정 클라이언트 (캐시 ok) ─────────────────────────────────────────────
 def _get_sa_creds(section: str, scopes: list):
@@ -39,7 +39,6 @@ def init_gsheet_client() -> gspread.Client:
 def init_gdrive_service():
     return build("drive", "v3", credentials=_get_sa_creds("gdrive_service_account", DRIVE_SCOPES))
 
-
 # ── Sheets I/O ────────────────────────────────────────────────────────────────
 def _open_sheet():
     sheet_id = _cfg("SHEET_ID")
@@ -54,29 +53,57 @@ def get_or_create_worksheet():
     try:
         ws = sh.worksheet(ws_name)
     except gspread.WorksheetNotFound:
-        # 새 워크시트 생성 시 확장된 헤더를 기록
         ws = sh.add_worksheet(title=ws_name, rows=200, cols=12)
-        ws.update("A1:H1", [SHEET_COLUMNS])   # ← 시간/작업장 포함 헤더
+        ws.update("A1:H1", [SHEET_COLUMNS])
+    _repair_header_if_needed(ws)
     return ws
 
+def _get_row(ws, row: int) -> list:
+    try:
+        return ws.row_values(row)
+    except Exception:
+        return []
+
+def _header_is_ok(hdr: list) -> bool:
+    if not hdr: 
+        return False
+    # 중복/공백 헤더 방지
+    cleaned = [c for c in hdr if isinstance(c, str) and c.strip() != ""]
+    if len(cleaned) != len(hdr):
+        return False
+    return True
+
+def _repair_header_if_needed(ws):
+    """1행 헤더가 비어있거나 중복이면 표준 헤더로 교체"""
+    hdr = _get_row(ws, 1)
+    if not _header_is_ok(hdr) or set(hdr) != set(SHEET_COLUMNS) or len(hdr) != len(SHEET_COLUMNS):
+        ws.update("A1:H1", [SHEET_COLUMNS])
+
 def _ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """표시/저장을 위해 필요한 컬럼이 없으면 채워넣는다."""
     if df is None or df.empty:
         return pd.DataFrame(columns=SHEET_COLUMNS)
     for c in SHEET_COLUMNS:
         if c not in df.columns:
             df[c] = None
-    # 보기 좋은 순서로 재정렬
     return df.reindex(columns=SHEET_COLUMNS)
 
 def read_dataframe() -> pd.DataFrame:
+    """
+    헤더가 망가진 시트에서도 안전하게 읽기:
+    - expected_headers=SHEET_COLUMNS 로 키를 강제 지정
+    - 필요 시 1행 헤더를 자동 수리
+    """
     ws = get_or_create_worksheet()
-    data = ws.get_all_records()
+    try:
+        data = ws.get_all_records(expected_headers=SHEET_COLUMNS)  # ← 안전 모드
+    except Exception:
+        # 예외 시 헤더를 표준으로 복구 후 재시도
+        _repair_header_if_needed(ws)
+        data = ws.get_all_records(expected_headers=SHEET_COLUMNS)
     df = pd.DataFrame(data)
-    # 기존 시트도 안전하게 업그레이드(누락 컬럼 자동 생성)
     return _ensure_columns(df)
 
-# ✔ 시그니처 확장: 시간, 작업장 추가
+# ✔ 시그니처: (일자, 시간, 온도, 습도, 작업장, 체감온도, 알람, 사진URL)
 def append_row(date_str: str,
                time_str: str,
                temp: Optional[float],
@@ -85,10 +112,6 @@ def append_row(date_str: str,
                heat_index: Optional[float],
                alarm: str,
                image_url: str):
-    """
-    시트에 한 줄 추가 (일자/시간/작업장 + 체감온도/알람 포함).
-    기존 4~6열 시트여도 자동으로 열이 확장되도록 헤더/보정 로직과 함께 동작합니다.
-    """
     ws = get_or_create_worksheet()
     ws.append_row(
         [date_str, time_str, temp, humid, workplace, heat_index, alarm, image_url],
@@ -96,14 +119,12 @@ def append_row(date_str: str,
     )
 
 def replace_all(df: pd.DataFrame):
-    """전체 덮어쓰기(필요 시 사용)."""
     ws = get_or_create_worksheet()
     df = _ensure_columns(df)
     ws.clear()
     set_with_dataframe(ws, df)
 
-
-# ── Drive 업로드 (서비스계정, 공유드라이브용 옵션) ──────────────────────────────
+# ── Drive 업로드 (서비스계정) ──────────────────────────────────────────────────
 def upload_image_to_drive(image_bytes: bytes, filename_prefix="photo", mime_type: str = "image/jpeg") -> str:
     folder_id = _cfg("DRIVE_FOLDER_ID")
     if not folder_id:
@@ -127,14 +148,13 @@ def upload_image_to_drive(image_bytes: bytes, filename_prefix="photo", mime_type
             pass
     return file.get("webViewLink") or file.get("webContentLink") or f"https://drive.google.com/file/d/{file_id}/view"
 
-
 # ── Drive 업로드 (사용자 OAuth → My Drive) ─────────────────────────────────────
 def upload_image_to_drive_user(creds, image_bytes: bytes, filename_prefix="photo", mime_type: str = "image/jpeg") -> str:
     drive = build("drive", "v3", credentials=creds)
     media = MediaIoBaseUpload(io.BytesIO(image_bytes), mimetype=mime_type, resumable=False)
     filename = f"{filename_prefix}_{int(time.time())}{'.png' if mime_type=='image/png' else '.jpg'}"
     body = {"name": filename}
-    folder_id = _cfg("DRIVE_FOLDER_ID")  # 있으면 해당 폴더(로그인 사용자 접근 가능해야 함)
+    folder_id = _cfg("DRIVE_FOLDER_ID")
     if folder_id:
         body["parents"] = [folder_id]
     file = drive.files().create(body=body, media_body=media, fields="id, webViewLink, webContentLink").execute()
@@ -147,7 +167,6 @@ def upload_image_to_drive_user(creds, image_bytes: bytes, filename_prefix="photo
         except Exception:
             pass
     return file.get("webViewLink") or file.get("webContentLink") or f"https://drive.google.com/file/d/{file_id}/view"
-
 
 # ── 진단 ───────────────────────────────────────────────────────────────────────
 def diagnose_permissions():
@@ -176,7 +195,6 @@ def diagnose_permissions():
         info["open_by_key_ok"] = False
         info["error"] = str(e)
     return info
-
 
 def diagnose_drive():
     info = {
