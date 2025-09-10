@@ -134,7 +134,7 @@ def main():
         st.stop()
 
     # 2) 줄 선택 가능한 테이블 렌더링 (체감온도/알람/썸네일/원본열기 포함)
-    st.subheader("현장별 체감온도 기록 데이터")
+    st.subheader("현장별 체감온도 기록 데이터(전체기록 다운로드")
     if not df.empty and {"일자", "온도(℃)", "습도(%)"}.issubset(df.columns):
         base = df.reset_index(drop=False).rename(columns={"index": "__rowid__"})  # 원본 행 위치 보존
         work = base.copy()
