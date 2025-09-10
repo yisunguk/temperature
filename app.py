@@ -49,7 +49,7 @@ def fetch_current_apparent_temp(lat=OPEN_METEO_LAT, lon=OPEN_METEO_LON, tz=OPEN_
     }
 
 
-st.set_page_config(page_title="실외 온도/습도 기록기", layout="centered")
+st.set_page_config(page_title="광양 LNG Jetty 인프라 현장 체감온도 기록기", layout="centered")
 TZ = st.secrets.get("TIMEZONE", "Asia/Seoul")
 
 
@@ -102,6 +102,20 @@ def _alarm_from_hi(hi_c, show_normal: bool = True):
         return "관심"
     return "정상" if show_normal else ""
 
+def alarm_badge(alarm: str) -> str:
+    colors = {
+        "정상": "#10b981",   # 초록
+        "관심": "#3b82f6",   # 파랑
+        "주의": "#f59e0b",   # 주황
+        "경고": "#ef4444",   # 빨강
+        "위험": "#7f1d1d",   # 진빨강/갈색
+    }
+    color = colors.get(alarm, "#6b7280")
+    return (
+        f"<span style='display:inline-block;padding:4px 10px;"
+        f"border-radius:999px;background:{color};color:white;font-weight:600'>"
+        f"{alarm}</span>"
+    )
 
 
 def main():
@@ -144,7 +158,7 @@ def main():
         st.stop()
 
     st.divider()
-    st.subheader("입력")
+    st.subheader("작업장의 온도 및 습도를 입력해 주세요")
 
     # ✅ 사용자 OAuth 로그인 (My Drive에 업로드하기 위해)
     creds = ensure_user_drive_creds()
@@ -214,6 +228,7 @@ def main():
             h = _to_float(hum)
             hi = _heat_index_celsius(t, h)
             alarm = _alarm_from_hi(hi)
+            st.markdown(alarm_badge(alarm), unsafe_allow_html=True)
 
             # ▶ 시트 한 줄 추가 (체감온도/알람 포함)
             append_row(date_str, t, h, hi, alarm, link)  # ← 확장된 시그니처

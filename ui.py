@@ -9,8 +9,8 @@ from datetime import datetime
 
 
 def render_header():
-    st.title("실외 온도/습도 기록기")
-    st.caption("카메라 촬영 또는 이미지 업로드 → OCR → 표 저장 (Google Sheets + Drive)")
+    st.title("광양 LNG Jetty 인프라 현장 체감온도 기록기")
+    st.caption("현재 광양의 체감온도)")
 
 
 def _toggle(label: str, value: bool, key: str) -> bool:
@@ -90,7 +90,7 @@ def extracted_edit_fields(initial_date: str, initial_temp, initial_hum):
             format="%.1f",
         )
 
-    st.caption("※ 값을 확인/수정한 다음, 아래 **저장 (Drive + Sheet)** 버튼을 눌러 저장합니다.")
+    st.caption("※ 값을 확인/수정한 다음, 아래 **저장 (Google drive + Google Sheet)** 버튼을 눌러 저장합니다.")
     return date_str, float(temp), float(hum)
 
 
@@ -191,7 +191,7 @@ def _alarm_from_hi(hi_c: Optional[float], show_normal: bool = True) -> str:
 
 
 def table_view(df: pd.DataFrame):
-    st.subheader("저장된 데이터")
+    st.subheader("현장별 체감온도 기록 데이터")
 
     # 계산 가능한 경우, 습도 옆에 '체감온도(℃)'와 '알람'을 끼워 넣어 표시
     has_cols = {"일자", "온도(℃)", "습도(%)"}.issubset(set(df.columns))
