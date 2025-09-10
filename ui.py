@@ -168,9 +168,7 @@ def table_view(df: pd.DataFrame):
         if "사진URL" in df.columns:
             df["사진썸네일"] = df["사진URL"].apply(_to_thumbnail_url)
             # 핵심 변경: 긴 링크 대신 '다운로드' 라벨만 표시되도록 튜플로 제공
-            df["원본열기"] = df["사진URL"].apply(
-                lambda u: ("다운로드", u) if isinstance(u, str) and u else ("", "")
-            )
+            df["원본열기"] = df["사진URL"].fillna("")
 
         view_cols = ["일자", "시간", "작업장", "온도(℃)", "습도(%)", "체감온도(℃)", "알람"]
         if "사진썸네일" in df.columns: view_cols += ["사진썸네일"]
@@ -190,7 +188,7 @@ def table_view(df: pd.DataFrame):
                     help="온도와 습도로 계산된 Heat Index(체감온도)"),
                 "알람": st.column_config.TextColumn("알람", help="관심/주의/경고/위험"),
                 "사진썸네일": st.column_config.ImageColumn("사진", width="small"),
-                "원본열기": st.column_config.LinkColumn("원본 열기"),
+                "원본열기": st.column_config.LinkColumn("원본 열기", display_text="다운로드"),
             },
             disabled=True,
         )

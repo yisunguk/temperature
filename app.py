@@ -142,10 +142,7 @@ def main():
         work["알람"] = [_alarm_from_hi(v) for v in work["체감온도(℃)"]]
         if "사진URL" in work.columns:
             work["사진썸네일"] = work["사진URL"].apply(_to_thumbnail_url)
-            work["원본열기"] = work["사진URL"].apply(
-                lambda u: ("다운로드", u) if isinstance(u, str) and u else ("", "")
-            )
-
+            work["원본열기"] = work["사진URL"].fillna("")
         view_cols = ["일자", "시간", "작업장", "온도(℃)", "습도(%)", "체감온도(℃)", "알람"]
         if "사진썸네일" in work.columns: view_cols += ["사진썸네일"]
         if "원본열기"   in work.columns: view_cols += ["원본열기"]
@@ -168,7 +165,7 @@ def main():
                     help="온도와 습도로 계산된 Heat Index(체감온도)"),
                 "알람": st.column_config.TextColumn("알람"),
                 "사진썸네일": st.column_config.ImageColumn("사진", width="small"),
-                "원본열기": st.column_config.LinkColumn("원본 열기"),
+                "원본열기": st.column_config.LinkColumn("원본 열기", display_text="다운로드"),
                 "선택": st.column_config.CheckboxColumn("선택"),
             },
             disabled=[c for c in show.columns if c != "선택"],  # 선택만 체크 가능
