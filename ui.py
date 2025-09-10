@@ -1,4 +1,5 @@
 # ui.py
+import re
 import streamlit as st
 import pandas as pd
 from PIL import Image
@@ -92,6 +93,61 @@ def extracted_edit_fields(initial_date: str, initial_temp, initial_hum):
     return date_str, float(temp), float(hum)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Google Drive 썸네일/링크 유틸
+# ──────────────────────────────────────────────────────────────────────────────
+def _extract_drive_file_id(url: str) -> Optional[str]:
+    """여러 형태의 Drive URL에서 fileId를 추출."""
+    if not isinstance(url, str) or not url:
+        return None
+    patterns = [
+        r"drive\.google\.com/file/d/([^/]+)/",   # .../file/d/<id>/view
+        r"[?&]id=([^&]+)",                       # ...open?id=<id> or uc?id=<id>
+        r"drive\.google\.com/uc\?id=([^&]+)",
+    ]
+    for p in patterns:
+        m = re.search(p, url)
+        if m:
+            return m.group(1)
+    # fallback: /file/d/ 가 있으나 슬래시 파싱이 실패했을 때
+    if "/file/d/" in url:
+        try:
+            return url.split("/file/d/")[1].split("/")[0]
+        except Exception:
+            pass
+    return None
+
+
+def _to_thumbnail_url(view_url: str) -> Optional[str]:
+    """fileId로 썸네일 URL 생성."""
+    fid = _extract_drive_file_id(view_url)
+    return f"https://drive.google.com/thumbnail?id={fid}" if fid else None
+
+
 def table_view(df: pd.DataFrame):
     st.subheader("저장된 데이터")
-    st.dataframe(df, use_container_width=False, width="stretch")
+
+    # 사진URL이 있으면 썸네일+원본열기로 가공해서 data_editor로 표시
+    if "사진URL" in df.columns and not df.empty:
+        df = df.copy()
+        df["사진썸네일"] = df["사진URL"].apply(_to_thumbnail_url)
+        df["원본열기"] = df["사진URL"].apply(lambda u: u if isinstance(u, str) and u else "")
+
+        view_cols = ["일자", "온도(℃)", "습도(%)", "사진썸네일", "원본열기"]
+        view_cols = [c for c in view_cols if c in df.columns]
+
+        st.data_editor(
+            df[view_cols],
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small"),
+                "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기"),
+                "온도(℃)": st.column_config.NumberColumn("온도(℃)", format="%.1f"),
+                "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100),
+            },
+            disabled=True,  # 목록은 읽기 전용 (편집은 입력 영역에서)
+        )
+    else:
+        # 사진URL이 없거나 데이터가 비어 있으면 기본 표로 표시
+        st.dataframe(df, width="stretch")
