@@ -9,7 +9,7 @@ from datetime import datetime
 
 
 def render_header():
-    st.title("인)광양 LNG Jetty 현장 체감온도 기록기")
+    st.title("광양 LNG Jetty 현장 체감온도 기록기")
     st.caption("현재 광양의 체감온도")
 
 
