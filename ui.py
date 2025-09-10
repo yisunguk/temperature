@@ -145,22 +145,59 @@ def _alarm_from_hi(hi_c: Optional[float], show_normal: bool = True) -> str:
     if x >= 32: return "관심"
     return "정상" if show_normal else ""
 
-def table_view(df: pd.DataFrame):
+def table_view(df: pd.DataFrame, enable_row_select: bool = False, key: str = "table"):
     st.subheader("현장별 체감온도 기록 데이터")
+
     if {"일자", "온도(℃)", "습도(%)"}.issubset(df.columns) and not df.empty:
-        df = df.copy()
-        df["체감온도(℃)"] = [_heat_index_celsius(t, h) for t, h in zip(df["온도(℃)"], df["습도(%)"])]
-        df["알람"] = [_alarm_from_hi(v) for v in df["체감온도(℃)"]]
-        if "사진URL" in df.columns:
-            df["사진썸네일"] = df["사진URL"].apply(_to_thumbnail_url)
-            df["원본열기"] = df["사진URL"].apply(lambda u: u if isinstance(u, str) and u else "")
-        # ✔ 일자 → 시간 → 작업장 순으로 노출
+        # 원본 인덱스를 보존하기 위해 reset_index 정보 사용
+        base = df.reset_index(drop=False).rename(columns={"index": "__rowid__"})  # 원본 행 위치
+        work = base.copy()
+
+        # 계산/표시용 컬럼 생성
+        work["체감온도(℃)"] = [_heat_index_celsius(t, h) for t, h in zip(work["온도(℃)"], work["습도(%)"])]
+        work["알람"] = [_alarm_from_hi(v) for v in work["체감온도(℃)"]]
+        if "사진URL" in work.columns:
+            work["사진썸네일"] = work["사진URL"].apply(_to_thumbnail_url)
+            work["원본열기"] = work["사진URL"].apply(lambda u: u if isinstance(u, str) and u else "")
+
         view_cols = ["일자", "시간", "작업장", "온도(℃)", "습도(%)", "체감온도(℃)", "알람"]
-        if "사진썸네일" in df.columns: view_cols += ["사진썸네일"]
-        if "원본열기"   in df.columns: view_cols += ["원본열기"]
-        view_cols = [c for c in view_cols if c in df.columns]
+        if "사진썸네일" in work.columns: view_cols += ["사진썸네일"]
+        if "원본열기"   in work.columns: view_cols += ["원본열기"]
+        view_cols = [c for c in view_cols if c in work.columns]
+
+        # ── 줄 선택 모드 ─────────────────────────────────────────────
+        if enable_row_select:
+            show = work[["__rowid__"] + view_cols].copy()
+            show.insert(1, "선택", False)  # 체크박스
+            show = show.set_index("__rowid__", drop=True)  # 인덱스를 원본 행 위치로
+
+            edited = st.data_editor(
+                show,
+                key=f"{key}_editor",
+                hide_index=False,
+                width="stretch",
+                column_config={
+                    "시간": st.column_config.TextColumn("시간"),
+                    "작업장": st.column_config.TextColumn("작업장"),
+                    "온도(℃)": st.column_config.NumberColumn("온도(℃)", format="%.1f"),
+                    "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100),
+                    "체감온도(℃)": st.column_config.NumberColumn("체감온도(℃)", format="%.1f",
+                        help="온도와 습도로 계산된 Heat Index(체감온도)"),
+                    "알람": st.column_config.TextColumn("알람"),
+                    "사진썸네일": st.column_config.ImageColumn("사진", width="small"),
+                    "원본열기": st.column_config.LinkColumn("원본 열기"),
+                    "선택": st.column_config.CheckboxColumn("선택"),
+                },
+                disabled=[c for c in edited.columns if c != "선택"],  # 선택만 수정 가능
+                num_rows="fixed",
+            )
+            selected_rowids = [int(i) for i in edited.index[edited["선택"]].tolist()]
+            # 화면에 보이는 표 DataFrame, 선택된 원본행 인덱스 리스트를 반환
+            return edited.drop(columns=["선택"]), selected_rowids
+
+        # ── 읽기 전용 모드(기존과 동일) ───────────────────────────────
         st.data_editor(
-            df[view_cols],
+            work[view_cols],
             hide_index=True,
             width="stretch",
             column_config={
@@ -176,5 +213,7 @@ def table_view(df: pd.DataFrame):
             },
             disabled=True,
         )
-        return
+        return work[view_cols], []
+    # 빈 데이터 대응
     st.dataframe(df, width="stretch")
+    return df, []
