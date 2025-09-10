@@ -10,6 +10,34 @@ from oauth_google import ensure_user_drive_creds          # OAuth 로그인 (사
 from storage import read_dataframe, append_row            # Sheets는 서비스계정
 from storage import upload_image_to_drive_user, diagnose_permissions
 
+# app.py 상단
+import requests  # ← 추가
+
+OPEN_METEO_LAT = 34.9414   # Gwangyang
+OPEN_METEO_LON = 127.69569
+OPEN_METEO_TZ  = "Asia/Seoul"
+
+def fetch_current_apparent_temp(lat=OPEN_METEO_LAT, lon=OPEN_METEO_LON, tz=OPEN_METEO_TZ):
+    """Open-Meteo 현재 체감온도/기온/습도 조회"""
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "current": "apparent_temperature,temperature_2m,relative_humidity_2m",
+        "timezone": tz,
+    }
+    r = requests.get(url, params=params, timeout=10)
+    r.raise_for_status()
+    j = r.json()
+    cur = j.get("current", {}) or {}
+    return {
+        "time": cur.get("time"),  # ISO string (Asia/Seoul)
+        "apparent_temperature": cur.get("apparent_temperature"),
+        "temperature_2m": cur.get("temperature_2m"),
+        "relative_humidity_2m": cur.get("relative_humidity_2m"),
+    }
+
+
 st.set_page_config(page_title="실외 온도/습도 기록기", layout="centered")
 TZ = st.secrets.get("TIMEZONE", "Asia/Seoul")
 
@@ -67,6 +95,31 @@ def _alarm_from_hi(hi_c, show_normal: bool = True):
 
 def main():
     render_header()
+    # app.py의 main() 안, render_header() 바로 아래 등 적절한 위치
+    # ▶ 앱 실행 시점의 "현재 날씨(광양)" 체감온도 표시
+    try:
+        now = fetch_current_apparent_temp()
+        hi_now = now["apparent_temperature"]  # feels-like (open-meteo)
+        alarm_now = _alarm_from_hi(hi_now)    # 기존 라벨 함수 재사용
+        cols = st.columns([1,1,1])
+        with cols[0]:
+            st.metric("광양 체감온도(℃)", f"{hi_now:.1f}" if hi_now is not None else "-")
+        with cols[1]:
+            st.metric("기온(℃)", f"{now['temperature_2m']:.1f}" if now["temperature_2m"] is not None else "-")
+        with cols[2]:
+            st.metric("습도(%)", f"{now['relative_humidity_2m']:.0f}" if now["relative_humidity_2m"] is not None else "-")
+
+        # 알림 뱃지
+        color = {"정상":"#10b981","관심":"#3b82f6","주의":"#f59e0b","경고":"#ef4444","위험":"#7f1d1d"}.get(alarm_now, "#6b7280")
+        st.markdown(
+            f"<div style='display:inline-block;padding:6px 10px;border-radius:999px;background:{color};color:white;font-weight:600'>"
+            f"{alarm_now}</div> "
+            f"<span style='color:#6b7280'>기준시각: {now.get('time') or '알 수 없음'}</span>",
+            unsafe_allow_html=True
+        )
+        st.divider()
+    except Exception as e:
+        st.info(f"현재 날씨 조회 실패: {e}")
 
     # 상단 표 로딩 (Sheets 서비스계정)
     try:
