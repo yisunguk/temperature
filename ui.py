@@ -6,6 +6,7 @@ import pandas as pd
 from PIL import Image
 from typing import Optional, Tuple
 from datetime import datetime
+from storage import replace_all  # ← 선택 삭제 후 시트에 반영
 
 
 def render_header():
@@ -201,33 +202,35 @@ def _alarm_from_hi(hi_c: Optional[float]) -> str:
 def table_view(df: pd.DataFrame):
     st.subheader("저장된 데이터")
 
-    # 계산 가능한 경우, 습도 옆에 '체감온도(℃)'와 '알람'을 끼워 넣어 표시
+    # 계산 가능한 경우, 습도 옆에 '체감온도(℃)'와 '알람'을 끼워 넣어 표시 + 삭제 체크박스
     has_cols = {"일자", "온도(℃)", "습도(%)"}.issubset(set(df.columns))
     if has_cols and not df.empty:
         df = df.copy()
 
-        # 체감온도 계산
+        # 체감온도/알람 계산(시트에 없던 예전 데이터도 화면에서 자동 계산)
         df["체감온도(℃)"] = [
             _heat_index_celsius(t, h) for t, h in zip(df["온도(℃)"], df["습도(%)"])
         ]
-        # 알람 분류
         df["알람"] = [_alarm_from_hi(v) for v in df["체감온도(℃)"]]
 
-        # 썸네일/링크 처리 (있을 때만)
+        # 썸네일 / 링크
         if "사진URL" in df.columns:
             df["사진썸네일"] = df["사진URL"].apply(_to_thumbnail_url)
-            df["원본열기"] = df["사진URL"].apply(lambda u: u if isinstance(u, str) and u else "")
+            df["원본열기"] = df["사진URL"]
+        else:
+            df["사진썸네일"] = None
+            df["원본열기"] = ""
 
-        # 컬럼 순서: 일자, 온도, 습도, (체감온도, 알람), 사진썸네일, 원본열기
-        view_cols = ["일자", "온도(℃)", "습도(%)", "체감온도(℃)", "알람"]
-        if "사진썸네일" in df.columns:
-            view_cols += ["사진썸네일"]
-        if "원본열기" in df.columns:
-            view_cols += ["원본열기"]
-        view_cols = [c for c in view_cols if c in df.columns]
+        # 표시 컬럼 + 삭제 체크박스
+        show_cols = ["일자", "온도(℃)", "습도(%)", "체감온도(℃)", "알람", "사진썸네일", "원본열기"]
+        show_df = df[show_cols].copy()
+        show_df["삭제"] = False  # 기본은 미선택
 
-        st.data_editor(
-            df[view_cols],
+        # 편집 가능 컬럼은 '삭제'만 허용
+        disable_cols = [c for c in show_df.columns if c != "삭제"]
+
+        edited = st.data_editor(
+            show_df,
             hide_index=True,
             width="stretch",
             column_config={
@@ -238,19 +241,37 @@ def table_view(df: pd.DataFrame):
                 "알람": st.column_config.TextColumn("알람", help="관심/주의/경고/위험 (KOSHA 산출표 기준)"),
                 "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small"),
                 "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기"),
+                "삭제": st.column_config.CheckboxColumn("삭제", help="체크한 행을 삭제"),
             },
-            disabled=True,  # 목록은 읽기 전용 (편집은 입력 영역에서)
+            disabled=disable_cols,
         )
+
+        # ⛔ 선택 삭제 버튼
+        if st.button("🗑️ 선택 행 삭제", type="secondary"):
+            if "삭제" not in edited.columns or not edited["삭제"].any():
+                st.warning("삭제할 행을 선택해 주세요.")
+            else:
+                keep = ~edited["삭제"].fillna(False)
+                to_save = edited.loc[keep, ["일자", "온도(℃)", "습도(%)", "체감온도(℃)", "알람", "원본열기"]].copy()
+                to_save.rename(columns={"원본열기": "사진URL"}, inplace=True)
+                # 시트 전체 덮어쓰기
+                replace_all(to_save)
+                st.success(f"{(~keep).sum()}개의 행을 삭제하고 시트를 갱신했습니다.")
+                st.rerun()
         return
 
     # 사진URL만 있는 기존 케이스(또는 비어 있음)
     if "사진URL" in df.columns and not df.empty:
         df = df.copy()
         df["사진썸네일"] = df["사진URL"].apply(_to_thumbnail_url)
-        df["원본열기"] = df["사진URL"].apply(lambda u: u if isinstance(u, str) and u else "")
-        cols = [c for c in ["일자", "온도(℃)", "습도(%)", "사진썸네일", "원본열기"] if c in df.columns]
-        st.data_editor(
-            df[cols],
+        df["원본열기"] = df["사진URL"]
+        show_cols = [c for c in ["일자", "온도(℃)", "습도(%)", "사진썸네일", "원본열기"] if c in df.columns]
+        show_df = df[show_cols].copy()
+        show_df["삭제"] = False
+        disable_cols = [c for c in show_df.columns if c != "삭제"]
+
+        edited = st.data_editor(
+            show_df,
             hide_index=True,
             width="stretch",
             column_config={
@@ -258,8 +279,21 @@ def table_view(df: pd.DataFrame):
                 "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100),
                 "사진썸네일": st.column_config.ImageColumn("사진", help="썸네일 미리보기", width="small"),
                 "원본열기": st.column_config.LinkColumn("원본 열기", help="Google Drive에서 원본 보기"),
+                "삭제": st.column_config.CheckboxColumn("삭제", help="체크한 행을 삭제"),
             },
-            disabled=True,
+            disabled=disable_cols,
         )
+
+        if st.button("🗑️ 선택 행 삭제", type="secondary"):
+            if "삭제" not in edited.columns or not edited["삭제"].any():
+                st.warning("삭제할 행을 선택해 주세요.")
+            else:
+                keep = ~edited["삭제"].fillna(False)
+                # 체감온도/알람 컬럼이 없는 시트 구조를 유지
+                to_save = edited.loc[keep, ["일자", "온도(℃)", "습도(%)", "원본열기"]].copy()
+                to_save.rename(columns={"원본열기": "사진URL"}, inplace=True)
+                replace_all(to_save)
+                st.success(f"{(~keep).sum()}개의 행을 삭제하고 시트를 갱신했습니다.")
+                st.rerun()
     else:
         st.dataframe(df, width="stretch")
