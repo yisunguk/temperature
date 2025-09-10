@@ -46,13 +46,13 @@ def _heat_index_celsius(temp_c, rh):
         HI_f += ((R - 85) / 10) * ((87 - Tf) / 5)
     return round((HI_f - 32.0) * 5.0 / 9.0, 1)
 
-def _alarm_from_hi(hi_c):
+def _alarm_from_hi(hi_c, show_normal: bool = True):
     if hi_c is None:
-        return ""
+        return "정상" if show_normal else ""
     try:
         x = float(hi_c)
     except Exception:
-        return ""
+        return "정상" if show_normal else ""
     if x >= 40:
         return "위험"
     if x >= 38:
@@ -61,7 +61,8 @@ def _alarm_from_hi(hi_c):
         return "주의"
     if x >= 32:
         return "관심"
-    return ""
+    return "정상" if show_normal else ""
+
 
 
 def main():
