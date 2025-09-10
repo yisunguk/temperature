@@ -110,7 +110,7 @@ def _extract_drive_file_id(url: str) -> Optional[str]:
         m = re.search(p, url)
         if m:
             return m.group(1)
-    # fallback: /file/d/ 가 있으나 슬래시 파싱이 실패했을 때
+    # fallback
     if isinstance(url, str) and "/file/d/" in url:
         try:
             return url.split("/file/d/")[1].split("/")[0]
@@ -126,14 +126,13 @@ def _to_thumbnail_url(view_url: str) -> Optional[str]:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 체감온도 계산(Heat Index, 섭씨) + KOSHA 구간 분류
+# 체감온도(Heat Index, 섭씨) 계산 + KOSHA 구간 분류
 # ──────────────────────────────────────────────────────────────────────────────
 def _heat_index_celsius(temp_c: Optional[float], rh: Optional[float]) -> Optional[float]:
     """
-    Rothfusz 회귀(미국 NWS) 기반 Heat Index 계산.
+    Rothfusz 회귀 기반 Heat Index 계산.
     - 입력: 건구온도(℃), 상대습도(%)
     - 출력: 체감온도(℃)
-    - 참고: 공식은 화씨에서 정의되어 있어 섭씨↔화씨 변환 사용.
     - 일반적으로 T<26.7℃ 또는 RH<40%에서는 HI≈T로 간주.
     """
     try:
@@ -162,7 +161,7 @@ def _heat_index_celsius(temp_c: Optional[float], rh: Optional[float]) -> Optiona
         + 0.00085282 * Tf * R * R - 0.00000199 * Tf * Tf * R * R
     )
 
-    # 보정항(저습·고습)의 간단 적용
+    # 저습/고습 보정
     if (R < 13) and (80 <= Tf <= 112):
         HI_f -= ((13 - R) / 4) * math.sqrt((17 - abs(Tf - 95)) / 17)
     elif (R > 85) and (80 <= Tf <= 87):
@@ -175,7 +174,7 @@ def _heat_index_celsius(temp_c: Optional[float], rh: Optional[float]) -> Optiona
 
 def _alarm_from_hi(hi_c: Optional[float]) -> str:
     """
-    KOSHA 체감온도 산출표의 구간에 따라 알람 분류:
+    KOSHA 체감온도 산출표 구간:
     - < 32: "" (무표시)
     - 32–34.9: 관심
     - 35–37.9: 주의
@@ -212,7 +211,7 @@ def table_view(df: pd.DataFrame):
             _heat_index_celsius(t, h) for t, h in zip(df["온도(℃)"], df["습도(%)"])
         ]
         # 알람 분류
-        df["알람"] = [ _alarm_from_hi(v) for v in df["체감온도(℃)"] ]
+        df["알람"] = [_alarm_from_hi(v) for v in df["체감온도(℃)"]]
 
         # 썸네일/링크 처리 (있을 때만)
         if "사진URL" in df.columns:
