@@ -158,7 +158,7 @@ def main():
         st.stop()
 
     st.divider()
-    st.subheader("작업장의 온도 및 습도를 입력해 주세요")
+    st.subheader("온습도계의 사진을 촬영하거나 갤러리에서 업로드해 주세요")
 
     # ✅ 사용자 OAuth 로그인 (My Drive에 업로드하기 위해)
     creds = ensure_user_drive_creds()
