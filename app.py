@@ -149,6 +149,7 @@ def main():
         show = work[["__rowid__"] + view_cols].copy()
         show.insert(1, "선택", False)
         show = show.set_index("__rowid__", drop=True)
+        show.index.name = "번호"
 
         edited = st.data_editor(
             show,
