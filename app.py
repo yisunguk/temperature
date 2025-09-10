@@ -91,14 +91,22 @@ def main():
     except Exception as e:
         st.info(f"현재 날씨 조회 실패: {e}")
 
-    # 목록
+    # ── 상단 테이블 (Sheets) ────────────────────────────────────────────────
+    # 1) 시트 읽기만 별도로 예외 처리: 실제 시트 오류만 여기서 잡습니다.
     try:
         df = read_dataframe()
-        table_view(df)
-    except Exception:
-        st.error("Google Sheets에 접근할 수 없습니다. 권한/ID를 확인하세요.")
+    except Exception as e:
+        st.error("Google Sheets 읽기 오류가 발생했습니다. 권한/ID 또는 네트워크 상태를 확인하세요.")
         st.code(diagnose_permissions(), language="python")
+        st.exception(e)  # 실제 예외 원인을 화면에 표시
         st.stop()
+
+    # 2) 표 렌더링은 분리해서 렌더링 오류를 정확히 표시합니다.
+    try:
+        table_view(df)
+    except Exception as e:
+        st.error("테이블 렌더링 중 오류가 발생했습니다. (UI 설정 또는 데이터 형식 문제일 수 있어요)")
+        st.exception(e)
 
     st.divider()
     st.subheader("온습도계의 사진을 촬영하거나 갤러리에서 업로드해 주세요")
@@ -158,14 +166,18 @@ def main():
         if "__img_bytes__" not in st.session_state:
             st.error("이미지 데이터를 찾을 수 없습니다. 다시 업로드/촬영해 주세요."); return
         try:
-            link = upload_image_to_drive_user(creds, st.session_state["__img_bytes__"],
-                                              filename_prefix="env_photo", mime_type=mime)
+            link = upload_image_to_drive_user(
+                creds,
+                st.session_state["__img_bytes__"],
+                filename_prefix="env_photo",
+                mime_type=mime
+            )
             t = _to_float(temp); h = _to_float(hum)
             hi = _heat_index_celsius(t, h)
             alarm = _alarm_from_hi(hi)
             st.markdown(alarm_badge(alarm), unsafe_allow_html=True)
 
-            # ✔ 확장 저장(일자, 시간, 작업장 포함)
+            # ✔ 확장 저장(일자, 시간, 작업장 포함) — storage.py 확장 시그니처와 일치
             append_row(date_str, time_str, t, h, (place or None), hi, alarm, link)
 
             st.session_state["__last_place__"] = place or ""
