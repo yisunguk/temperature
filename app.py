@@ -285,7 +285,11 @@ def main():
     last_place = st.session_state.get("__last_place__", "")
 
     # 폼 초기값: 새 이미지일 때만 OCR 결과로 세팅하고, 이후에는 사용자가 수정한 값 유지
-    if  st.session_state.get("__form_seed__") == img_id:
+    # 폼 초기값: 새 이미지일 때만 OCR 결과로 세팅
+    if st.session_state.get("__form_seed__") == img_id:
+        st.session_state.setdefault("edit_temp",
+            round(float(result.get("temperature") or 0.0), 1))  # ⬅ 1자리 고정
+
         st.session_state.setdefault("edit_date",  result.get("date") or init_date)
         st.session_state.setdefault("edit_time",  init_time)
         st.session_state.setdefault("edit_temp",  float(result.get("temperature") or 0.0))
