@@ -22,17 +22,25 @@ def render_header():
 
 
 def _inject_compact_css():
-    # 여백을 살짝 줄여서 깜빡임 체감도도 낮춤
     st.markdown(
         """
         <style>
-          .block-container { padding-top: 1.1rem; padding-bottom: 1.8rem; }
+          /* 모바일 노치/브라우저 UI를 고려한 안전 여백 */
+          :root { --safe-top: env(safe-area-inset-top); }
+
+          /* 상단 패딩을 넉넉히 확보 (기존 1.1rem → 3rem + safe-top) */
+          .block-container { padding-top: calc(3rem + var(--safe-top)); padding-bottom: 1.8rem; }
+
+          /* 제목이 잘리지 않도록 줄높이/여백도 보정 */
+          h1, .stTitle { line-height: 1.2 !important; margin-top: 0.2rem !important; }
+
           .stButton>button { height: 40px; }
           [data-testid="stMetricDelta"] span { font-size: 0.85rem !important; }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
 
 
 def _toggle(label: str, value: bool, key: str) -> bool:
