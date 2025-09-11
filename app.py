@@ -299,23 +299,11 @@ def main():
     st.session_state.get("edit_hum",   float(result.get("humidity") or 0.0)),
     initial_place=st.session_state.get("edit_place", last_place),
 )
-    # 사용자가 수정한 값은 세션에 즉시 반영(재실행에도 유지)
-    st.session_state["edit_date"]  = date_str or init_date
-    st.session_state["edit_time"]  = time_str or init_time
-    st.session_state["edit_temp"]  = float(temp) if temp is not None else 0.0
-    st.session_state["edit_hum"]   = float(hum)  if hum  is not None else 0.0
-    st.session_state["edit_place"] = place or ""
+    
+    # ✅ 위젯 키는 위젯이 관리하게 두고, 지역 변수만 사용합니다.
+#    세션에 굳이 다시 써넣지 않습니다.
 
-    # ❌ 기존의
-# if submitted:
-#     if "__img_bytes__" not in st.session_state:
-#         ...
-# else:
-#     try:
-#         ... 저장 ...
-# (그리고 맨 아래에 또 st.button("저장") 로직)  ← 전부 제거
-
-# ✅ 교체: 폼 제출 시에만 저장
+# ✅ 폼 제출 시에만 저장
     if submitted:
         if "__img_bytes__" not in st.session_state:
             st.error("이미지 데이터를 찾을 수 없습니다. 다시 업로드/촬영해 주세요.")
@@ -327,20 +315,25 @@ def main():
                     filename_prefix="env_photo",
                     mime_type=_infer_mime(pil_img),
                 )
-                t = _to_float(st.session_state["edit_temp"])
-                h = _to_float(st.session_state["edit_hum"])
+
+            # ⬇️ 소수점 1자리로 반올림하여 저장
+                t = _to_float(temp)
+                h = _to_float(hum)
+                t = round(t, 1) if t is not None else None
+                h = round(h, 1) if h is not None else None
+
                 hi = _heat_index_celsius(t, h)
                 alarm = _alarm_from_hi(hi)
 
                 append_row(
-                    st.session_state["edit_date"],
-                    st.session_state["edit_time"],
+                    (date_str or init_date),
+                    (time_str or init_time),
                     t, h,
-                    (st.session_state["edit_place"] or None),
+                    (place or None),
                     hi, alarm, link,
                 )
 
-                st.session_state["__last_place__"] = st.session_state["edit_place"]
+                st.session_state["__last_place__"] = place or ""
                 st.toast("저장 완료! 테이블을 새로고침합니다.", icon="✅")
                 st.rerun()
             except Exception as e:
