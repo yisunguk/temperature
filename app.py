@@ -3,6 +3,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import math
 import re
+import hashlib
 import streamlit as st
 from oauth_google import ensure_user_drive_creds, logout_button
 from ui import render_header, input_panel, extracted_edit_fields  # table_view 대신 직접 구현
@@ -23,7 +24,8 @@ TZ = st.secrets.get("TIMEZONE", "Asia/Seoul")
 # 유틸
 # ──────────────────────────────────────────────────────────────────────────────
 def _fmt_ts(ts: str | None) -> str:
-    if not ts: return "알 수 없음"
+    if not ts:
+        return "알 수 없음"
     try:
         return datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M")
     except Exception:
@@ -31,32 +33,45 @@ def _fmt_ts(ts: str | None) -> str:
 
 def fetch_current_apparent_temp(lat=OPEN_METEO_LAT, lon=OPEN_METEO_LON, tz=OPEN_METEO_TZ):
     url = "https://api.open-meteo.com/v1/forecast"
-    params = {"latitude": lat, "longitude": lon,
-              "current": "apparent_temperature,temperature_2m,relative_humidity_2m",
-              "timezone": tz}
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "current": "apparent_temperature,temperature_2m,relative_humidity_2m",
+        "timezone": tz,
+    }
     r = requests.get(url, params=params, timeout=10); r.raise_for_status()
     cur = (r.json().get("current") or {})
-    return {"time": cur.get("time"),
-            "apparent_temperature": cur.get("apparent_temperature"),
-            "temperature_2m": cur.get("temperature_2m"),
-            "relative_humidity_2m": cur.get("relative_humidity_2m")}
+    return {
+        "time": cur.get("time"),
+        "apparent_temperature": cur.get("apparent_temperature"),
+        "temperature_2m": cur.get("temperature_2m"),
+        "relative_humidity_2m": cur.get("relative_humidity_2m"),
+    }
 
 def _to_float(x):
-    try: return float(x) if x not in (None, "") else None
-    except Exception: return None
+    try:
+        return float(x) if x not in (None, "") else None
+    except Exception:
+        return None
 
 def _heat_index_celsius(temp_c, rh):
     try:
-        if temp_c is None or rh is None: return None
+        if temp_c is None or rh is None:
+            return None
         T = float(temp_c); R = float(rh)
-    except Exception: return None
-    if math.isnan(T) or math.isnan(R): return None
-    if T < 26.7 or R < 40: return round(T, 1)
+    except Exception:
+        return None
+    if math.isnan(T) or math.isnan(R):
+        return None
+    if T < 26.7 or R < 40:
+        return round(T, 1)
     Tf = T * 9/5 + 32
-    HI_f = (-42.379 + 2.04901523*Tf + 10.14333127*R
-            - 0.22475541*Tf*R - 0.00683783*Tf*Tf
-            - 0.05481717*R*R + 0.00122874*Tf*Tf*R
-            + 0.00085282*Tf*R*R - 0.00000199*Tf*Tf*R*R)
+    HI_f = (
+        -42.379 + 2.04901523*Tf + 10.14333127*R
+        - 0.22475541*Tf*R - 0.00683783*Tf*Tf
+        - 0.05481717*R*R + 0.00122874*Tf*Tf*R
+        + 0.00085282*Tf*R*R - 0.00000199*Tf*Tf*R*R
+    )
     if (R < 13) and (80 <= Tf <= 112):
         HI_f -= ((13-R)/4) * ((17-abs(Tf-95))/17) ** 0.5
     elif (R > 85) and (80 <= Tf <= 87):
@@ -64,9 +79,12 @@ def _heat_index_celsius(temp_c, rh):
     return round((HI_f - 32) * 5/9, 1)
 
 def _alarm_from_hi(hi_c, show_normal: bool = True):
-    if hi_c is None: return "정상" if show_normal else ""
-    try: x = float(hi_c)
-    except Exception: return "정상" if show_normal else ""
+    if hi_c is None:
+        return "정상" if show_normal else ""
+    try:
+        x = float(hi_c)
+    except Exception:
+        return "정상" if show_normal else ""
     if x >= 40: return "위험"
     if x >= 38: return "경고"
     if x >= 35: return "주의"
@@ -102,11 +120,15 @@ def _to_thumbnail_url(view_url: str) -> str | None:
     fid = _extract_drive_file_id(view_url)
     return f"https://drive.google.com/thumbnail?id={fid}" if fid else None
 
+def _infer_mime(pil_img) -> str:
+    fmt = (getattr(pil_img, "format", "") or "").upper()
+    return "image/png" if fmt == "PNG" else "image/jpeg"
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 메인
 # ──────────────────────────────────────────────────────────────────────────────
 def main():
-    render_header()  # 헤더/UI 빌딩 (ui.py)  :contentReference[oaicite:4]{index=4}
+    render_header()  # 헤더/UI 빌딩 (ui.py)
 
     # 현재(광양) 지표
     try:
@@ -117,8 +139,11 @@ def main():
         with c2: st.metric("기온(℃)", f"{now['temperature_2m']:.1f}" if now["temperature_2m"] is not None else "-")
         with c3: st.metric("습도(%)", f"{now['relative_humidity_2m']:.0f}" if now["relative_humidity_2m"] is not None else "-")
         color = {"정상":"#10b981","관심":"#3b82f6","주의":"#f59e0b","경고":"#ef4444","위험":"#7f1d1d"}.get(alarm_now, "#6b7280")
-        st.markdown(f"<div style='display:inline-block;padding:6px 10px;border-radius:999px;background:{color};color:white;font-weight:600'>{alarm_now}</div> "
-                    f"<span style='color:#6b7280'>기준시각: {_fmt_ts(now.get('time'))}</span>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='display:inline-block;padding:6px 10px;border-radius:999px;background:{color};color:white;font-weight:600'>{alarm_now}</div> "
+            f"<span style='color:#6b7280'>기준시각: {_fmt_ts(now.get('time'))}</span>",
+            unsafe_allow_html=True,
+        )
         st.divider()
     except Exception as e:
         st.info(f"현재 날씨 조회 실패: {e}")
@@ -126,7 +151,7 @@ def main():
     # ── 상단 테이블 (Sheets) ────────────────────────────────────────────────
     # 1) 시트 읽기
     try:
-        df = read_dataframe()  # storage.py  :contentReference[oaicite:5]{index=5}
+        df = read_dataframe()  # storage.py
     except Exception as e:
         st.error("Google Sheets 읽기 오류가 발생했습니다. 권한/ID 또는 네트워크 상태를 확인하세요.")
         st.code(diagnose_permissions(), language="python")
@@ -138,11 +163,10 @@ def main():
     sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit" if sheet_id else None
 
     if sheet_url:
-        st.markdown(
-             f"### 현장별 체감온도 기록 데이터 [전체기록 다운로드]({sheet_url})"
-        )
+        st.markdown(f"### 현장별 체감온도 기록 데이터 [전체기록 다운로드]({sheet_url})")
     else:
         st.subheader("현장별 체감온도 기록 데이터")
+
     if not df.empty and {"일자", "온도(℃)", "습도(%)"}.issubset(df.columns):
         base = df.reset_index(drop=False).rename(columns={"index": "__rowid__"})  # 원본 행 위치 보존
         work = base.copy()
@@ -169,7 +193,8 @@ def main():
                 "작업장": st.column_config.TextColumn("작업장"),
                 "온도(℃)": st.column_config.NumberColumn("온도(℃)", format="%.1f"),
                 "습도(%)": st.column_config.NumberColumn("습도(%)", min_value=0, max_value=100),
-                "체감온도(℃)": st.column_config.NumberColumn("체감온도(℃)", format="%.1f",
+                "체감온도(℃)": st.column_config.NumberColumn(
+                    "체감온도(℃)", format="%.1f",
                     help="온도와 습도로 계산된 Heat Index(체감온도)"),
                 "알람": st.column_config.TextColumn("알람"),
                 "사진썸네일": st.column_config.ImageColumn("사진", width="small"),
@@ -186,7 +211,7 @@ def main():
             if st.button("🗑 선택 행 삭제 (Sheet 동기화)", type="primary", disabled=(len(selected) == 0)):
                 try:
                     new_df = df.drop(index=selected).reset_index(drop=True)
-                    replace_all(new_df)  # storage.py  :contentReference[oaicite:6]{index=6}
+                    replace_all(new_df)  # storage.py
                     st.success(f"{len(selected)}건 삭제 완료! 테이블을 새로고침합니다.")
                     st.rerun()
                 except Exception as e:
@@ -199,7 +224,7 @@ def main():
     st.divider()
     st.subheader("온습도계의 사진을 촬영하거나 갤러리에서 업로드해 주세요")
 
-    # OAuth(Drive 업로드용)  (oauth_google.ensure_user_drive_creds)  :contentReference[oaicite:7]{index=7}
+    # OAuth(Drive 업로드용)
     creds = ensure_user_drive_creds()
     with st.expander("🔎 로그인 진단", expanded=False):
         st.write("has_creds:", bool(creds and creds.valid))
@@ -211,7 +236,7 @@ def main():
             st.write("cookie_present: N/A")
 
     # 이미지 입력
-    pil_img, img_bytes, src = input_panel()  # ui.py  :contentReference[oaicite:8]{index=8}
+    pil_img, img_bytes, src = input_panel()  # ui.py
     if img_bytes:
         st.session_state["__img_bytes__"] = img_bytes
         st.session_state["__uploaded_at__"] = datetime.now(ZoneInfo(TZ))  # ✔ 업로드/촬영 시각
@@ -220,11 +245,32 @@ def main():
         st.info("카메라로 촬영하거나 갤러리에서 이미지를 업로드하세요.")
         return
 
+    # 이미지 ID(내용 해시)로 OCR 캐싱
+    img_id = hashlib.sha1(img_bytes).hexdigest()
+
     with st.expander("이미지 미리보기", expanded=True):
         st.image(pil_img, caption="입력 이미지")
 
-    with st.spinner("OCR 추출 중..."):
-        result = run_ocr(pil_img, st.session_state.get("__img_bytes__"))  # ocr.py  :contentReference[oaicite:9]{index=9}
+    # ── OCR: 같은 이미지면 재실행 금지
+    if (
+        st.session_state.get("__last_ocr_img_id__") == img_id
+        and "__last_ocr_result__" in st.session_state
+    ):
+        result = st.session_state["__last_ocr_result__"]
+    else:
+        with st.spinner("OCR 추출 중..."):
+            # run_ocr의 시그니처가 (pil_img, img_bytes) 또는 (pil_img) 둘 다 커버하도록 작성됨
+            try:
+                result = run_ocr(pil_img, img_bytes)
+            except TypeError:
+                result = run_ocr(pil_img)
+        st.session_state["__last_ocr_img_id__"] = img_id
+        st.session_state["__last_ocr_result__"] = result
+        # 새 이미지가 들어왔으니 폼 초기화 플래그 갱신
+        st.session_state["__form_seed__"] = img_id
+        for k in ("edit_date", "edit_time", "edit_temp", "edit_hum", "edit_place"):
+            if k in st.session_state:
+                st.session_state.pop(k)
 
     st.success("OCR 추출 완료!")
     if result.get("pretty"):
@@ -232,42 +278,66 @@ def main():
         with c1: st.metric("온도(℃)", f"{result['temperature']:.1f}" if result['temperature'] is not None else "-")
         with c2: st.metric("습도(%)", f"{result['humidity']:.1f}" if result['humidity'] is not None else "-")
 
-    # 입력 폼 (날짜·시간 기본값은 업로드 시각)
+    # 입력 폼 (날짜·시간 기본값은 업로드 시각, 새 이미지일 때만 초기화)
     init_dt = st.session_state.get("__uploaded_at__") or datetime.now(ZoneInfo(TZ))
-    init_date = init_dt.strftime("%Y-%m-%d"); init_time = init_dt.strftime("%H:%M")
+    init_date = init_dt.strftime("%Y-%m-%d")
+    init_time = init_dt.strftime("%H:%M")
     last_place = st.session_state.get("__last_place__", "")
 
+    # 폼 초기값: 새 이미지일 때만 OCR 결과로 세팅하고, 이후에는 사용자가 수정한 값 유지
+    if st.session_state.get("__form_seed__") == img_id:
+        st.session_state.setdefault("edit_date",  result.get("date") or init_date)
+        st.session_state.setdefault("edit_time",  init_time)
+        st.session_state.setdefault("edit_temp",  float(result.get("temperature") or 0.0))
+        st.session_state.setdefault("edit_hum",   float(result.get("humidity") or 0.0))
+        st.session_state.setdefault("edit_place", last_place)
+
     date_str, time_str, temp, hum, place = extracted_edit_fields(
-        result.get("date") or init_date, init_time,
-        result.get("temperature"), result.get("humidity"),
-        initial_place=last_place
-    )  # ui.py  :contentReference[oaicite:10]{index=10}
-    if not date_str: date_str = init_date
-    if not time_str: time_str = init_time
-    if place is None: place = ""
+        st.session_state.get("edit_date",  init_date),
+        st.session_state.get("edit_time",  init_time),
+        st.session_state.get("edit_temp",  float(result.get("temperature") or 0.0)),
+        st.session_state.get("edit_hum",   float(result.get("humidity") or 0.0)),
+        initial_place=st.session_state.get("edit_place", last_place),
+    )
+    # 사용자가 수정한 값은 세션에 즉시 반영(재실행에도 유지)
+    st.session_state["edit_date"]  = date_str or init_date
+    st.session_state["edit_time"]  = time_str or init_time
+    st.session_state["edit_temp"]  = float(temp) if temp is not None else 0.0
+    st.session_state["edit_hum"]   = float(hum)  if hum  is not None else 0.0
+    st.session_state["edit_place"] = place or ""
 
     # 저장
-    fmt = (getattr(pil_img, "format", "") or "").upper()
-    mime = "image/png" if fmt == "PNG" else "image/jpeg"
-    if st.button("💾 저장 (Drive + Sheet)", key="save_btn", use_container_width=False, width="stretch"):
+    mime = _infer_mime(pil_img)
+    if st.button("💾 저장 (Drive + Sheet)", key="save_btn"):
         if "__img_bytes__" not in st.session_state:
-            st.error("이미지 데이터를 찾을 수 없습니다. 다시 업로드/촬영해 주세요."); return
+            st.error("이미지 데이터를 찾을 수 없습니다. 다시 업로드/촬영해 주세요.")
+            return
         try:
             link = upload_image_to_drive_user(
                 creds,
                 st.session_state["__img_bytes__"],
                 filename_prefix="env_photo",
-                mime_type=mime
+                mime_type=mime,
             )
-            t = _to_float(temp); h = _to_float(hum)
+            t = _to_float(st.session_state["edit_temp"])
+            h = _to_float(st.session_state["edit_hum"])
             hi = _heat_index_celsius(t, h)
             alarm = _alarm_from_hi(hi)
             st.markdown(alarm_badge(alarm), unsafe_allow_html=True)
 
             # ✔ 확장 저장(일자, 시간, 작업장 포함)
-            append_row(date_str, time_str, t, h, (place or None), hi, alarm, link)  # storage.py  :contentReference[oaicite:11]{index=11}
+            append_row(
+                st.session_state["edit_date"],
+                st.session_state["edit_time"],
+                t,
+                h,
+                (st.session_state["edit_place"] or None),
+                hi,
+                alarm,
+                link,
+            )
 
-            st.session_state["__last_place__"] = place or ""
+            st.session_state["__last_place__"] = st.session_state["edit_place"]
             st.toast("저장 완료! 테이블을 새로고침합니다.", icon="✅")
             st.rerun()
         except Exception as e:
