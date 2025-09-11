@@ -4,14 +4,20 @@ from zoneinfo import ZoneInfo
 import math
 import re
 import hashlib
-import streamlit as st
-from oauth_google import ensure_user_drive_creds, logout_button
-from ui import render_header, input_panel, extracted_edit_fields  # table_view 대신 직접 구현
-from ocr import run_ocr
-from storage import read_dataframe, append_row, replace_all  # ← replace_all 추가
-from storage import upload_image_to_drive_user, diagnose_permissions
 import requests
 import pandas as pd
+import streamlit as st
+
+from oauth_google import ensure_user_drive_creds, logout_button
+from ui import render_header, input_panel, extracted_edit_fields
+from ocr import run_ocr
+from storage import (
+    read_dataframe,
+    append_row,
+    replace_all,
+    upload_image_to_drive_user,
+    diagnose_permissions,
+)
 
 OPEN_METEO_LAT = 34.9414   # Gwangyang
 OPEN_METEO_LON = 127.69569
@@ -96,7 +102,6 @@ def alarm_badge(alarm: str) -> str:
     color = colors.get(alarm, "#6b7280")
     return f"<span style='display:inline-block;padding:4px 10px;border-radius:999px;background:{color};color:white;font-weight:600'>{alarm}</span>"
 
-# Google Drive 썸네일 URL 생성 (ui.py의 내부 유틸과 동일 동작)
 def _extract_drive_file_id(url: str) -> str | None:
     if not isinstance(url, str) or not url:
         return None
@@ -128,7 +133,7 @@ def _infer_mime(pil_img) -> str:
 # 메인
 # ──────────────────────────────────────────────────────────────────────────────
 def main():
-    render_header()  # 헤더/UI 빌딩 (ui.py)
+    render_header()
 
     # 현재(광양) 지표
     try:
@@ -148,27 +153,24 @@ def main():
     except Exception as e:
         st.info(f"현재 날씨 조회 실패: {e}")
 
-    # ── 상단 테이블 (Sheets) ────────────────────────────────────────────────
-    # 1) 시트 읽기
+    # ── 상단 테이블 (Sheets)
     try:
-        df = read_dataframe()  # storage.py
+        df = read_dataframe()
     except Exception as e:
         st.error("Google Sheets 읽기 오류가 발생했습니다. 권한/ID 또는 네트워크 상태를 확인하세요.")
         st.code(diagnose_permissions(), language="python")
         st.exception(e)
         st.stop()
 
-    # 2) 줄 선택 가능한 테이블 렌더링 (체감온도/알람/썸네일/원본열기 포함)
     sheet_id = st.secrets.get("SHEET_ID")
     sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit" if sheet_id else None
-
     if sheet_url:
         st.markdown(f"### 현장별 체감온도 기록 데이터 [전체기록 다운로드]({sheet_url})")
     else:
         st.subheader("현장별 체감온도 기록 데이터")
 
     if not df.empty and {"일자", "온도(℃)", "습도(%)"}.issubset(df.columns):
-        base = df.reset_index(drop=False).rename(columns={"index": "__rowid__"})  # 원본 행 위치 보존
+        base = df.reset_index(drop=False).rename(columns={"index": "__rowid__"})
         work = base.copy()
         work["체감온도(℃)"] = [_heat_index_celsius(t, h) for t, h in zip(work["온도(℃)"], work["습도(%)"])]
         work["알람"] = [_alarm_from_hi(v) for v in work["체감온도(℃)"]]
@@ -186,7 +188,7 @@ def main():
         edited = st.data_editor(
             show,
             key="main_table_editor",
-            hide_index=False,  # ← 인덱스가 원본 행 위치
+            hide_index=False,
             width="stretch",
             column_config={
                 "시간": st.column_config.TextColumn("시간"),
@@ -201,7 +203,7 @@ def main():
                 "원본열기": st.column_config.LinkColumn("원본 열기", display_text="다운로드"),
                 "선택": st.column_config.CheckboxColumn("선택"),
             },
-            disabled=[c for c in show.columns if c != "선택"],  # 선택만 체크 가능
+            disabled=[c for c in show.columns if c != "선택"],
             num_rows="fixed",
         )
         selected = [int(i) for i in edited.index[edited["선택"]].tolist()]
@@ -211,7 +213,7 @@ def main():
             if st.button("🗑 선택 행 삭제 (Sheet 동기화)", type="primary", disabled=(len(selected) == 0)):
                 try:
                     new_df = df.drop(index=selected).reset_index(drop=True)
-                    replace_all(new_df)  # storage.py
+                    replace_all(new_df)
                     st.success(f"{len(selected)}건 삭제 완료! 테이블을 새로고침합니다.")
                     st.rerun()
                 except Exception as e:
@@ -236,10 +238,10 @@ def main():
             st.write("cookie_present: N/A")
 
     # 이미지 입력
-    pil_img, img_bytes, src = input_panel()  # ui.py
+    pil_img, img_bytes, src = input_panel()
     if img_bytes:
         st.session_state["__img_bytes__"] = img_bytes
-        st.session_state["__uploaded_at__"] = datetime.now(ZoneInfo(TZ))  # ✔ 업로드/촬영 시각
+        st.session_state["__uploaded_at__"] = datetime.now(ZoneInfo(TZ))
 
     if pil_img is None or img_bytes is None:
         st.info("카메라로 촬영하거나 갤러리에서 이미지를 업로드하세요.")
@@ -259,18 +261,15 @@ def main():
         result = st.session_state["__last_ocr_result__"]
     else:
         with st.spinner("OCR 추출 중..."):
-            # run_ocr의 시그니처가 (pil_img, img_bytes) 또는 (pil_img) 둘 다 커버하도록 작성됨
             try:
                 result = run_ocr(pil_img, img_bytes)
             except TypeError:
                 result = run_ocr(pil_img)
         st.session_state["__last_ocr_img_id__"] = img_id
         st.session_state["__last_ocr_result__"] = result
-        # 새 이미지가 들어왔으니 폼 초기화 플래그 갱신
         st.session_state["__form_seed__"] = img_id
         for k in ("edit_date", "edit_time", "edit_temp", "edit_hum", "edit_place"):
-            if k in st.session_state:
-                st.session_state.pop(k)
+            st.session_state.pop(k, None)
 
     st.success("OCR 추출 완료!")
     if result.get("pretty"):
@@ -284,56 +283,68 @@ def main():
     init_time = init_dt.strftime("%H:%M")
     last_place = st.session_state.get("__last_place__", "")
 
-    # 폼 초기값: 새 이미지일 때만 OCR 결과로 세팅하고, 이후에는 사용자가 수정한 값 유지
-    if  st.session_state.get("__form_seed__") == img_id:
+    if st.session_state.get("__form_seed__") == img_id:
         st.session_state.setdefault("edit_date",  result.get("date") or init_date)
         st.session_state.setdefault("edit_time",  init_time)
         st.session_state.setdefault("edit_temp",  float(result.get("temperature") or 0.0))
         st.session_state.setdefault("edit_hum",   float(result.get("humidity") or 0.0))
         st.session_state.setdefault("edit_place", last_place)
 
-    date_str, time_str, temp, hum, place, submitted = extracted_edit_fields(
-    st.session_state.get("edit_date",  init_date),
-    st.session_state.get("edit_time",  init_time),
-    st.session_state.get("edit_temp",  float(result.get("temperature") or 0.0)),
-    st.session_state.get("edit_hum",   float(result.get("humidity") or 0.0)),
-    initial_place=st.session_state.get("edit_place", last_place),
-)
+    # ✅ 구/신 ui.py 모두 호환 (6개 또는 5개 반환)
+    vals = extracted_edit_fields(
+        st.session_state.get("edit_date",  init_date),
+        st.session_state.get("edit_time",  init_time),
+        st.session_state.get("edit_temp",  float(result.get("temperature") or 0.0)),
+        st.session_state.get("edit_hum",   float(result.get("humidity") or 0.0)),
+        initial_place=st.session_state.get("edit_place", last_place),
+    )
 
+    if isinstance(vals, tuple) and len(vals) == 6:
+        date_str, time_str, temp, hum, place, submitted = vals
+    elif isinstance(vals, tuple) and len(vals) == 5:
+        date_str, time_str, temp, hum, place = vals
+        # 구버전 폼(저장 버튼이 폼 밖)에 대한 백업 버튼
+        submitted = st.button("💾 저장 (Drive + Sheet)", key="save_btn_legacy")
+    else:
+        raise ValueError("extracted_edit_fields() unexpected return shape")
+
+    # 사용자가 수정한 값 세션 저장(재실행에도 유지)
+    st.session_state["edit_date"]  = date_str or init_date
+    st.session_state["edit_time"]  = time_str or init_time
+    st.session_state["edit_temp"]  = float(temp) if temp is not None else 0.0
+    st.session_state["edit_hum"]   = float(hum)  if hum  is not None else 0.0
+    st.session_state["edit_place"] = place or ""
+
+    # 폼 제출 시에만 저장
     if submitted:
         if "__img_bytes__" not in st.session_state:
             st.error("이미지 데이터를 찾을 수 없습니다. 다시 업로드/촬영해 주세요.")
-    else:
-        try:
-            link = upload_image_to_drive_user(
-                creds,
-                st.session_state["__img_bytes__"],
-                filename_prefix="env_photo",
-                mime_type=_infer_mime(pil_img),
-            )
+        else:
+            try:
+                link = upload_image_to_drive_user(
+                    creds,
+                    st.session_state["__img_bytes__"],
+                    filename_prefix="env_photo",
+                    mime_type=_infer_mime(pil_img),
+                )
+                t = _to_float(st.session_state["edit_temp"])
+                h = _to_float(st.session_state["edit_hum"])
+                hi = _heat_index_celsius(t, h)
+                alarm = _alarm_from_hi(hi)
 
-            # ⬇️ 위젯이 준 로컬 변수 사용
-            t = _to_float(temp)
-            h = _to_float(hum)
-            hi = _heat_index_celsius(t, h)
-            alarm = _alarm_from_hi(hi)
+                append_row(
+                    st.session_state["edit_date"],
+                    st.session_state["edit_time"],
+                    t, h,
+                    (st.session_state["edit_place"] or None),
+                    hi, alarm, link,
+                )
 
-            append_row(
-                (date_str or init_date),
-                (time_str or init_time),
-                t, h,
-                (place or None),
-                hi, alarm, link,
-            )
-
-            # 마지막 작업장만 별도 비-위젯 키로 유지하고 싶으면 새 키 사용
-            st.session_state["__last_place__"] = (place or "")
-
-            st.toast("저장 완료! 테이블을 새로고침합니다.", icon="✅")
-            st.rerun()
-        except Exception as e:
-            st.error(f"저장 중 오류: {e}")
-
+                st.session_state["__last_place__"] = st.session_state["edit_place"]
+                st.toast("저장 완료! 테이블을 새로고침합니다.", icon="✅")
+                st.rerun()
+            except Exception as e:
+                st.error(f"저장 중 오류: {e}")
 
 
 if __name__ == "__main__":
