@@ -16,7 +16,7 @@ from PIL import Image
 # 헤더
 # ──────────────────────────────────────────────────────────────────────────────
 def render_header():
-    st.title("광양 LNG Jetty 현장 체감온도 기록기")
+    st.title("건설현장 체감온도 기록기")
     st.caption("현재 광양의 체감온도")
     _inject_compact_css()
 
