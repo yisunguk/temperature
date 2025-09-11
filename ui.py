@@ -16,7 +16,7 @@ from PIL import Image
 # 헤더
 # ──────────────────────────────────────────────────────────────────────────────
 def render_header():
-    st.title("건설현장 체감온도 기록기")
+    st.title("광양 LNG Jetty 현장 체감온도 기록기")
     st.caption("현재 광양의 체감온도")
     _inject_compact_css()
 
@@ -125,8 +125,7 @@ def extracted_edit_fields(
     if "edit_date"  not in ss: ss["edit_date"]  = initial_date or datetime.now().strftime("%Y-%m-%d")
     if "edit_time"  not in ss: ss["edit_time"]  = initial_time or datetime.now().strftime("%H:%M")
     if "edit_temp"  not in ss: ss["edit_temp"]  = float(initial_temp) if initial_temp is not None else 0.0
-    if "edit_temp" not in ss:
-        ss["edit_temp"] = round(float(initial_temp) if initial_temp is not None else 0.0, 1)
+    if "edit_hum"   not in ss: ss["edit_hum"]   = float(initial_hum)  if initial_hum  is not None else 0.0
     if "edit_place" not in ss: ss["edit_place"] = initial_place or ""
 
     with st.form("edit_form", border=False):
@@ -134,7 +133,6 @@ def extracted_edit_fields(
         with c1: date_str = st.text_input("일자 (YYYY-MM-DD)", key="edit_date")
         with c2: time_str = st.text_input("시간 (HH:MM)", key="edit_time")
         with c3: temp     = st.number_input("온도(℃)", step=0.1, format="%.1f", key="edit_temp")
-        temp = st.number_input("온도(℃)", step=0.1, format="%.1f", key="edit_temp")
         with c4: hum      = st.number_input("습도(%)", step=0.1, format="%.1f", key="edit_hum")
         with c5: place    = st.text_input("작업장", key="edit_place", placeholder="예) 1안벽 / 야드A / 배관구역")
 
@@ -142,7 +140,7 @@ def extracted_edit_fields(
         submitted = st.form_submit_button("💾 저장 (Drive + Sheet)", type="primary")
 
     # ⬇️ 꼭 6개 반환!
-    return date_str, time_str, round(float(temp), 1), float(hum), place, submitted
+    return date_str, time_str, float(temp), float(hum), place, submitted
 
 
 # ──────────────────────────────────────────────────────────────────────────────
