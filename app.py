@@ -208,7 +208,7 @@ def main():
 
         col_del, col_info = st.columns([1, 3])
         with col_del:
-            if st.button("🗑 선택 행 삭제 (Sheet 동기화)", type="primary", disabled=(len(selected) == 0)):
+            if st.button("🗑 선택 행 삭제", type="primary", disabled=(len(selected) == 0)):
                 try:
                     new_df = df.drop(index=selected).reset_index(drop=True)
                     replace_all(new_df)  # storage.py
