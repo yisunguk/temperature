@@ -121,7 +121,6 @@ def extracted_edit_fields(
 ):
     st.subheader("추출 결과 확인/수정")
 
-    # 세션 상태에 최초 1회만 초기화 (사용자 수정값은 재실행에도 유지)
     ss = st.session_state
     if "edit_date"  not in ss: ss["edit_date"]  = initial_date or datetime.now().strftime("%Y-%m-%d")
     if "edit_time"  not in ss: ss["edit_time"]  = initial_time or datetime.now().strftime("%H:%M")
@@ -131,20 +130,16 @@ def extracted_edit_fields(
 
     with st.form("edit_form", border=False):
         c1, c2, c3, c4, c5 = st.columns(5)
-        with c1:
-            date_str = st.text_input("일자 (YYYY-MM-DD)", key="edit_date")
-        with c2:
-            time_str = st.text_input("시간 (HH:MM)", key="edit_time")
-        with c3:
-            temp     = st.number_input("온도(℃)", step=0.1, format="%.1f", key="edit_temp")
-        with c4:
-            hum      = st.number_input("습도(%)", step=0.1, format="%.1f", key="edit_hum")
-        with c5:
-            place    = st.text_input("작업장", key="edit_place", placeholder="예) 1안벽 / 야드A / 배관구역")
+        with c1: date_str = st.text_input("일자 (YYYY-MM-DD)", key="edit_date")
+        with c2: time_str = st.text_input("시간 (HH:MM)", key="edit_time")
+        with c3: temp     = st.number_input("온도(℃)", step=0.1, format="%.1f", key="edit_temp")
+        with c4: hum      = st.number_input("습도(%)", step=0.1, format="%.1f", key="edit_hum")
+        with c5: place    = st.text_input("작업장", key="edit_place", placeholder="예) 1안벽 / 야드A / 배관구역")
 
         st.caption("※ 값을 확인/수정한 다음, 아래 **저장 (Google drive + Google Sheet)** 버튼을 눌러 저장합니다.")
         submitted = st.form_submit_button("💾 저장 (Drive + Sheet)", type="primary")
 
+    # ⬇️ 꼭 6개 반환!
     return date_str, time_str, float(temp), float(hum), place, submitted
 
 
