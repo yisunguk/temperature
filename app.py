@@ -285,11 +285,7 @@ def main():
     last_place = st.session_state.get("__last_place__", "")
 
     # 폼 초기값: 새 이미지일 때만 OCR 결과로 세팅하고, 이후에는 사용자가 수정한 값 유지
-    # 폼 초기값: 새 이미지일 때만 OCR 결과로 세팅
-    if st.session_state.get("__form_seed__") == img_id:
-        st.session_state.setdefault("edit_temp",
-            round(float(result.get("temperature") or 0.0), 1))  # ⬅ 1자리 고정
-
+    if  st.session_state.get("__form_seed__") == img_id:
         st.session_state.setdefault("edit_date",  result.get("date") or init_date)
         st.session_state.setdefault("edit_time",  init_time)
         st.session_state.setdefault("edit_temp",  float(result.get("temperature") or 0.0))
@@ -307,36 +303,37 @@ def main():
     if submitted:
         if "__img_bytes__" not in st.session_state:
             st.error("이미지 데이터를 찾을 수 없습니다. 다시 업로드/촬영해 주세요.")
-        else:
-            try:
-                link = upload_image_to_drive_user(
-                    creds,
-                    st.session_state["__img_bytes__"],
-                    filename_prefix="env_photo",
-                    mime_type=_infer_mime(pil_img),
-                )
+    else:
+        try:
+            link = upload_image_to_drive_user(
+                creds,
+                st.session_state["__img_bytes__"],
+                filename_prefix="env_photo",
+                mime_type=_infer_mime(pil_img),
+            )
 
             # ⬇️ 위젯이 준 로컬 변수 사용
-                t = _to_float(temp)
-                h = _to_float(hum)
-                hi = _heat_index_celsius(t, h)
-                alarm = _alarm_from_hi(hi)
+            t = _to_float(temp)
+            h = _to_float(hum)
+            hi = _heat_index_celsius(t, h)
+            alarm = _alarm_from_hi(hi)
 
-                append_row(
-                    (date_str or init_date),
-                    (time_str or init_time),
-                    t, h,
-                    (place or None),
-                    hi, alarm, link,
-                )
+            append_row(
+                (date_str or init_date),
+                (time_str or init_time),
+                t, h,
+                (place or None),
+                hi, alarm, link,
+            )
 
             # 마지막 작업장만 별도 비-위젯 키로 유지하고 싶으면 새 키 사용
-                st.session_state["__last_place__"] = (place or "")
+            st.session_state["__last_place__"] = (place or "")
 
-                st.toast("저장 완료! 테이블을 새로고침합니다.", icon="✅")
-                st.rerun()
-            except Exception as e:
-                st.error(f"저장 중 오류: {e}")
+            st.toast("저장 완료! 테이블을 새로고침합니다.", icon="✅")
+            st.rerun()
+        except Exception as e:
+            st.error(f"저장 중 오류: {e}")
+
 
 
 if __name__ == "__main__":
