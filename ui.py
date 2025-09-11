@@ -72,27 +72,38 @@ def input_panel() -> Tuple[Optional[Image.Image], Optional[bytes], str]:
 # ──────────────────────────────────────────────────────────────────────────────
 # 추출 결과 편집 필드 (일자, 시간, 온도, 습도, 작업장)
 # ──────────────────────────────────────────────────────────────────────────────
-def extracted_edit_fields(initial_date: str, initial_time: str, initial_temp, initial_hum, initial_place: str = ""):
+def extracted_edit_fields(initial_date: str, initial_time: str,
+                          initial_temp, initial_hum, initial_place: str = ""):
     st.subheader("추출 결과 확인/수정")
-    default_date = initial_date or datetime.now().strftime("%Y-%m-%d")
-    default_time = initial_time or datetime.now().strftime("%H:%M")
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
-        date_str = st.text_input("일자 (YYYY-MM-DD)", value=default_date)
-    with c2:
-        time_str = st.text_input("시간 (HH:MM)", value=default_time)
-    with c3:
-        temp = st.number_input("온도(℃)", value=float(initial_temp) if initial_temp is not None else 0.0,
-                               step=0.1, format="%.1f")
-    with c4:
-        hum = st.number_input("습도(%)", value=float(initial_hum) if initial_hum is not None else 0.0,
-                              step=0.1, format="%.1f")
-    with c5:
-        place = st.text_input("작업장", value=initial_place, placeholder="예) 1안벽 / 야드A / 배관구역")
+    # 세션 상태에 최초 1회만 초기화 (사용자 수정값은 재실행에도 유지)
+    ss = st.session_state
+    if "edit_date"  not in ss: ss["edit_date"]  = initial_date or datetime.now().strftime("%Y-%m-%d")
+    if "edit_time"  not in ss: ss["edit_time"]  = initial_time or datetime.now().strftime("%H:%M")
+    if "edit_temp"  not in ss: ss["edit_temp"]  = float(initial_temp) if initial_temp is not None else 0.0
+    if "edit_hum"   not in ss: ss["edit_hum"]   = float(initial_hum)  if initial_hum  is not None else 0.0
+    if "edit_place" not in ss: ss["edit_place"] = initial_place or ""
 
-    st.caption("※ 값을 확인/수정한 다음, 아래 **저장 (Google drive + Google Sheet)** 버튼을 눌러 저장합니다.")
-    return date_str, time_str, float(temp), float(hum), place
+    # ✅ 폼으로 묶으면 폼 내부 위젯 변경만으로는 앱이 재실행되지 않음 (깜빡임 X)
+    with st.form("edit_form", border=False):
+        c1, c2, c3, c4, c5 = st.columns(5)
+        with c1:
+            date_str = st.text_input("일자 (YYYY-MM-DD)", key="edit_date")
+        with c2:
+            time_str = st.text_input("시간 (HH:MM)", key="edit_time")
+        with c3:
+            temp     = st.number_input("온도(℃)", step=0.1, format="%.1f", key="edit_temp")
+        with c4:
+            hum      = st.number_input("습도(%)", step=0.1, format="%.1f", key="edit_hum")
+        with c5:
+            place    = st.text_input("작업장", key="edit_place", placeholder="예) 1안벽 / 야드A / 배관구역")
+
+        st.caption("※ 값을 확인/수정한 다음, 아래 **저장 (Google drive + Google Sheet)** 버튼을 눌러 저장합니다.")
+        submitted = st.form_submit_button("💾 저장 (Drive + Sheet)", type="primary")
+
+    # 값 + 제출 여부 반환
+    return date_str, time_str, float(temp), float(hum), place, submitted
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Google Drive 썸네일/링크 유틸

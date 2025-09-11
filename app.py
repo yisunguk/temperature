@@ -292,19 +292,51 @@ def main():
         st.session_state.setdefault("edit_hum",   float(result.get("humidity") or 0.0))
         st.session_state.setdefault("edit_place", last_place)
 
-    date_str, time_str, temp, hum, place = extracted_edit_fields(
-        st.session_state.get("edit_date",  init_date),
-        st.session_state.get("edit_time",  init_time),
-        st.session_state.get("edit_temp",  float(result.get("temperature") or 0.0)),
-        st.session_state.get("edit_hum",   float(result.get("humidity") or 0.0)),
-        initial_place=st.session_state.get("edit_place", last_place),
-    )
+    date_str, time_str, temp, hum, place, submitted = extracted_edit_fields(
+    st.session_state.get("edit_date",  init_date),
+    st.session_state.get("edit_time",  init_time),
+    st.session_state.get("edit_temp",  float(result.get("temperature") or 0.0)),
+    st.session_state.get("edit_hum",   float(result.get("humidity") or 0.0)),
+    initial_place=st.session_state.get("edit_place", last_place),
+)
     # 사용자가 수정한 값은 세션에 즉시 반영(재실행에도 유지)
     st.session_state["edit_date"]  = date_str or init_date
     st.session_state["edit_time"]  = time_str or init_time
     st.session_state["edit_temp"]  = float(temp) if temp is not None else 0.0
     st.session_state["edit_hum"]   = float(hum)  if hum  is not None else 0.0
     st.session_state["edit_place"] = place or ""
+
+    if submitted:
+        if "__img_bytes__" not in st.session_state:
+            st.error("이미지 데이터를 찾을 수 없습니다. 다시 업로드/촬영해 주세요.")
+    else:
+        try:
+            link = upload_image_to_drive_user(
+                creds,
+                st.session_state["__img_bytes__"],
+                filename_prefix="env_photo",
+                mime_type=_infer_mime(pil_img),
+            )
+            t = _to_float(st.session_state["edit_temp"])
+            h = _to_float(st.session_state["edit_hum"])
+            hi = _heat_index_celsius(t, h)
+            alarm = _alarm_from_hi(hi)
+            st.markdown(alarm_badge(alarm), unsafe_allow_html=True)
+
+            # (프로젝트에 맞는 append_row 시그니처 사용)
+            append_row(
+                st.session_state["edit_date"],
+                st.session_state["edit_time"],
+                t, h,
+                (st.session_state["edit_place"] or None),
+                hi, alarm, link,
+            )
+
+            st.session_state["__last_place__"] = st.session_state["edit_place"]
+            st.toast("저장 완료! 테이블을 새로고침합니다.", icon="✅")
+            st.rerun()
+        except Exception as e:
+            st.error(f"저장 중 오류: {e}")
 
     # 저장
     mime = _infer_mime(pil_img)
