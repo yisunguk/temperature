@@ -1,11 +1,16 @@
 # ui.py
+from __future__ import annotations
+
+import io
 import re
 import math
+from typing import Optional, Tuple
+from datetime import datetime
+
 import streamlit as st
 import pandas as pd
 from PIL import Image
-from typing import Optional, Tuple
-from datetime import datetime
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 헤더
@@ -13,14 +18,34 @@ from datetime import datetime
 def render_header():
     st.title("광양 LNG Jetty 현장 체감온도 기록기")
     st.caption("현재 광양의 체감온도")
+    _inject_compact_css()
+
+
+def _inject_compact_css():
+    # 여백을 살짝 줄여서 깜빡임 체감도도 낮춤
+    st.markdown(
+        """
+        <style>
+          .block-container { padding-top: 1.1rem; padding-bottom: 1.8rem; }
+          .stButton>button { height: 40px; }
+          [data-testid="stMetricDelta"] span { font-size: 0.85rem !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 def _toggle(label: str, value: bool, key: str) -> bool:
+    # Streamlit 1.32+ toggle 지원 / 하위버전 호환
     if hasattr(st, "toggle"):
         return st.toggle(label, value=value, key=key)
     return st.checkbox(label, value=value, key=key)
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 입력 패널 (카메라 / 업로드)
+#   - PIL 이미지는 RGB로 통일해 OCR 안정성 향상
+#   - (image, image_bytes, source) 반환
 # ──────────────────────────────────────────────────────────────────────────────
 def input_panel() -> Tuple[Optional[Image.Image], Optional[bytes], str]:
     if "__camera_enabled__" not in st.session_state:
@@ -52,9 +77,10 @@ def input_panel() -> Tuple[Optional[Image.Image], Optional[bytes], str]:
             with col2:
                 st.caption("촬영 후에도 끄기 버튼으로 카메라 자원을 해제할 수 있어요.")
 
-            if cam_img:
-                image = Image.open(cam_img)
-                image_bytes = cam_img.getvalue()
+            if cam_img is not None:
+                raw = cam_img.getvalue()
+                image = _load_pil(raw)
+                image_bytes = raw
                 source = "camera"
         else:
             st.caption("🔕 카메라가 꺼져 있습니다. 위 토글을 켜면 촬영할 수 있어요.")
@@ -62,18 +88,37 @@ def input_panel() -> Tuple[Optional[Image.Image], Optional[bytes], str]:
     # 업로드
     with tab_up:
         up = st.file_uploader("이미지 파일 업로드 (jpg/png)", type=["jpg", "jpeg", "png"])
-        if up:
-            image = Image.open(up)
-            image_bytes = up.getvalue()
+        if up is not None:
+            raw = up.getvalue()
+            image = _load_pil(raw)
+            image_bytes = raw
             source = "upload"
 
     return image, image_bytes, source
 
+
+def _load_pil(raw: bytes) -> Optional[Image.Image]:
+    try:
+        img = Image.open(io.BytesIO(raw))
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        return img
+    except Exception:
+        return None
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 추출 결과 편집 필드 (일자, 시간, 온도, 습도, 작업장)
+#   - st.form 으로 묶어서 **입력 중엔 재실행/깜빡임 없음**
+#   - 항상 6개 반환: (date_str, time_str, temp, hum, place, submitted)
 # ──────────────────────────────────────────────────────────────────────────────
-def extracted_edit_fields(initial_date: str, initial_time: str,
-                          initial_temp, initial_hum, initial_place: str = ""):
+def extracted_edit_fields(
+    initial_date: str,
+    initial_time: str,
+    initial_temp,
+    initial_hum,
+    initial_place: str = "",
+):
     st.subheader("추출 결과 확인/수정")
 
     # 세션 상태에 최초 1회만 초기화 (사용자 수정값은 재실행에도 유지)
@@ -84,7 +129,6 @@ def extracted_edit_fields(initial_date: str, initial_time: str,
     if "edit_hum"   not in ss: ss["edit_hum"]   = float(initial_hum)  if initial_hum  is not None else 0.0
     if "edit_place" not in ss: ss["edit_place"] = initial_place or ""
 
-    # ✅ 폼으로 묶으면 폼 내부 위젯 변경만으로는 앱이 재실행되지 않음 (깜빡임 X)
     with st.form("edit_form", border=False):
         c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
@@ -101,7 +145,6 @@ def extracted_edit_fields(initial_date: str, initial_time: str,
         st.caption("※ 값을 확인/수정한 다음, 아래 **저장 (Google drive + Google Sheet)** 버튼을 눌러 저장합니다.")
         submitted = st.form_submit_button("💾 저장 (Drive + Sheet)", type="primary")
 
-    # 값 + 제출 여부 반환
     return date_str, time_str, float(temp), float(hum), place, submitted
 
 
@@ -120,16 +163,18 @@ def _extract_drive_file_id(url: str) -> Optional[str]:
         m = re.search(p, url)
         if m:
             return m.group(1)
-    if isinstance(url, str) and "/file/d/" in url:
+    if "/file/d/" in url:
         try:
             return url.split("/file/d/")[1].split("/")[0]
         except Exception:
-            pass
+            return None
     return None
+
 
 def _to_thumbnail_url(view_url: str) -> Optional[str]:
     fid = _extract_drive_file_id(view_url)
     return f"https://drive.google.com/thumbnail?id={fid}" if fid else None
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 체감온도 계산/알람 (표 표시용)
@@ -156,6 +201,7 @@ def _heat_index_celsius(temp_c: Optional[float], rh: Optional[float]) -> Optiona
         HI_f += ((R-85)/10) * ((87-Tf)/5)
     return round((HI_f - 32) * 5/9, 1)
 
+
 def _alarm_from_hi(hi_c: Optional[float], show_normal: bool = True) -> str:
     if hi_c is None: return "정상" if show_normal else ""
     try: x = float(hi_c)
@@ -166,9 +212,10 @@ def _alarm_from_hi(hi_c: Optional[float], show_normal: bool = True) -> str:
     if x >= 32: return "관심"
     return "정상" if show_normal else ""
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 표 렌더링 (읽기 전용)
-#   - URL은 ('다운로드', url) 튜플로 표기 → 화면에는 '다운로드'만 표시
+#   - URL은 문자열로 저장하고 LinkColumn(display_text="다운로드")로 출력
 # ──────────────────────────────────────────────────────────────────────────────
 def table_view(df: pd.DataFrame):
     st.subheader("현장별 체감온도 기록 데이터")
@@ -178,7 +225,6 @@ def table_view(df: pd.DataFrame):
         df["알람"] = [_alarm_from_hi(v) for v in df["체감온도(℃)"]]
         if "사진URL" in df.columns:
             df["사진썸네일"] = df["사진URL"].apply(_to_thumbnail_url)
-            # 핵심 변경: 긴 링크 대신 '다운로드' 라벨만 표시되도록 튜플로 제공
             df["원본열기"] = df["사진URL"].fillna("")
 
         view_cols = ["일자", "시간", "작업장", "온도(℃)", "습도(%)", "체감온도(℃)", "알람"]
@@ -204,4 +250,5 @@ def table_view(df: pd.DataFrame):
             disabled=True,
         )
         return
+
     st.dataframe(df, width="stretch")
