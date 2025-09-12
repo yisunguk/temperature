@@ -20,12 +20,27 @@ OPEN_METEO_TZ  = "Asia/Seoul"
 st.set_page_config(page_title="광양 LNG Jetty 인프라 현장 체감온도 기록기", layout="centered")
 TZ = st.secrets.get("TIMEZONE", "Asia/Seoul")
 
-@st.cache_resource(show_spinner=False)
-def _get_drive_creds_cached():
-    return ensure_user_drive_creds()
 # ──────────────────────────────────────────────────────────────────────────────
 # 유틸
 # ──────────────────────────────────────────────────────────────────────────────
+
+def get_drive_creds_session():
+    # 세션에 있으면 재사용
+    if "__drive_creds__" in st.session_state:
+        return st.session_state["__drive_creds__"]
+
+    # 최초 1회: 위젯/컴포넌트 실행 가능 (캐시 금지)
+    creds = ensure_user_drive_creds()
+
+    # 진단/상태 표시용 플래그(선택)
+    if creds and getattr(creds, "valid", False):
+        st.session_state["__google_token__"] = True
+
+    # 세션에 보관하여 리런 간 유지
+    st.session_state["__drive_creds__"] = creds
+    return creds
+
+
 def _fmt_ts(ts: str | None) -> str:
     if not ts:
         return "알 수 없음"
@@ -228,7 +243,7 @@ def main():
     st.subheader("온습도계의 사진을 촬영하거나 갤러리에서 업로드해 주세요")
 
     # OAuth(Drive 업로드용)
-    creds = _get_drive_creds_cached()
+    creds = get_drive_creds_session()
     with st.expander("🔎 로그인 진단", expanded=False):
         st.write("has_creds:", bool(creds and creds.valid))
         st.write("in_session:", "__google_token__" in st.session_state)
