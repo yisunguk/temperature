@@ -20,6 +20,9 @@ OPEN_METEO_TZ  = "Asia/Seoul"
 st.set_page_config(page_title="광양 LNG Jetty 인프라 현장 체감온도 기록기", layout="centered")
 TZ = st.secrets.get("TIMEZONE", "Asia/Seoul")
 
+@st.cache_resource(show_spinner=False)
+def _get_drive_creds_cached():
+    return ensure_user_drive_creds()
 # ──────────────────────────────────────────────────────────────────────────────
 # 유틸
 # ──────────────────────────────────────────────────────────────────────────────
@@ -225,7 +228,7 @@ def main():
     st.subheader("온습도계의 사진을 촬영하거나 갤러리에서 업로드해 주세요")
 
     # OAuth(Drive 업로드용)
-    creds = ensure_user_drive_creds()
+    creds = _get_drive_creds_cached()
     with st.expander("🔎 로그인 진단", expanded=False):
         st.write("has_creds:", bool(creds and creds.valid))
         st.write("in_session:", "__google_token__" in st.session_state)
