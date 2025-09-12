@@ -66,6 +66,57 @@ def fetch_current_apparent_temp(lat=OPEN_METEO_LAT, lon=OPEN_METEO_LON, tz=OPEN_
         "relative_humidity_2m": cur.get("relative_humidity_2m"),
     }
 
+from datetime import date, timedelta  # 파일 상단 import에 이미 있다면 중복 추가 X
+
+def fetch_weekly_table(lat=OPEN_METEO_LAT, lon=OPEN_METEO_LON, tz=OPEN_METEO_TZ, days: int = 7):
+    """오늘 기준 일주일(오늘 포함 days일) 일별 지표를 표로 반환"""
+    start = date.today()
+    end   = start + timedelta(days=days-1)
+
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        # 일별 지표: 체감온도 최대/최소, 기온 최대/최소, 평균 습도
+        "daily": ",".join([
+            "apparent_temperature_max",
+            "apparent_temperature_min",
+            "temperature_2m_max",
+            "temperature_2m_min",
+            "relative_humidity_2m_mean",
+        ]),
+        "timezone": tz,
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+    }
+    r = requests.get(url, params=params, timeout=10); r.raise_for_status()
+    daily = (r.json().get("daily") or {})
+
+    # pandas 표로 정리
+    import pandas as pd
+    df = pd.DataFrame({
+        "일자": daily.get("time", []),
+        "체감온도 최대(℃)": daily.get("apparent_temperature_max", []),
+        "체감온도 최소(℃)": daily.get("apparent_temperature_min", []),
+        "기온 최대(℃)": daily.get("temperature_2m_max", []),
+        "기온 최소(℃)": daily.get("temperature_2m_min", []),
+        "평균 습도(%)": daily.get("relative_humidity_2m_mean", []),
+    })
+
+    # 알람(일중 최악 기준)을 계산해 표시
+    def _alarm_from_max_hi(v):
+        return _alarm_from_hi(v)  # 기존 임계치 함수 재사용
+    df["알람(최대 HI)"] = [ _alarm_from_max_hi(v) for v in df["체감온도 최대(℃)"] ]
+
+    # 보기 좋게 반올림
+    for c in ["체감온도 최대(℃)", "체감온도 최소(℃)", "기온 최대(℃)", "기온 최소(℃)"]:
+        df[c] = [None if x is None else round(float(x), 1) for x in df[c]]
+    if "평균 습도(%)" in df:
+        df["평균 습도(%)"] = [None if x is None else round(float(x), 0) for x in df["평균 습도(%)"]]
+
+    return df
+
+
 def _to_float(x):
     try:
         return float(x) if x not in (None, "") else None
@@ -240,6 +291,30 @@ def main():
         st.dataframe(df, width="stretch")
 
     st.divider()
+        # ── 이번 주 예보 (Open-Meteo) ───────────────────────────────────────────
+    try:
+        df_week = fetch_weekly_table()
+        st.subheader("이번 주 체감온도/기온/습도 (Open-Meteo)")
+        st.data_editor(
+            df_week,
+            hide_index=True,
+            width="stretch",
+            disabled=True,
+            column_config={
+                "일자": st.column_config.TextColumn("일자"),
+                "체감온도 최대(℃)": st.column_config.NumberColumn("체감온도 최대(℃)", format="%.1f"),
+                "체감온도 최소(℃)": st.column_config.NumberColumn("체감온도 최소(℃)", format="%.1f"),
+                "기온 최대(℃)": st.column_config.NumberColumn("기온 최대(℃)", format="%.1f"),
+                "기온 최소(℃)": st.column_config.NumberColumn("기온 최소(℃)", format="%.1f"),
+                "평균 습도(%)": st.column_config.NumberColumn("평균 습도(%)", format="%.0f", min_value=0, max_value=100),
+                "알람(최대 HI)": st.column_config.TextColumn("알람(최대 HI)"),
+            },
+        )
+        st.caption("※ 알람은 하루 중 '체감온도 최대' 기준으로 산정됩니다.")
+        st.divider()
+    except Exception as e:
+        st.info(f"주간 예보 조회 실패: {e}")
+
     st.subheader("온습도계의 사진을 촬영하거나 갤러리에서 업로드해 주세요")
 
     # OAuth(Drive 업로드용)
