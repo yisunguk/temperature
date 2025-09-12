@@ -294,7 +294,7 @@ def main():
         # ── 이번 주 예보 (Open-Meteo) ───────────────────────────────────────────
     try:
         df_week = fetch_weekly_table()
-        st.subheader("이번 주 체감온도/기온/습도 (Open-Meteo)")
+        st.subheader("금주의 광양 LNG Jetty 현장 예상 체감온도")
         st.data_editor(
             df_week,
             hide_index=True,
